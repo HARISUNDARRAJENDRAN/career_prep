@@ -35,37 +35,37 @@ export function CareerGoalsStep({ initialData, onNext }: CareerGoalsStepProps) {
   const form = useForm<CareerGoalsData>({
     resolver: zodResolver(careerGoalsSchema),
     defaultValues: {
-      target_roles: initialData?.target_roles || [],
-      preferred_locations: initialData?.preferred_locations || [],
+      targetRoles: initialData?.targetRoles || [],
+      preferredLocations: initialData?.preferredLocations || [],
     },
   });
 
-  const selectedRoles = form.watch('target_roles');
-  const selectedLocations = form.watch('preferred_locations');
+  const selectedRoles = form.watch('targetRoles');
+  const selectedLocations = form.watch('preferredLocations');
 
   function toggleRole(role: string) {
-    const current = form.getValues('target_roles');
+    const current = form.getValues('targetRoles');
     if (current.includes(role)) {
       form.setValue(
-        'target_roles',
+        'targetRoles',
         current.filter((r) => r !== role),
         { shouldValidate: true }
       );
     } else {
-      form.setValue('target_roles', [...current, role], { shouldValidate: true });
+      form.setValue('targetRoles', [...current, role], { shouldValidate: true });
     }
   }
 
   function toggleLocation(location: string) {
-    const current = form.getValues('preferred_locations');
+    const current = form.getValues('preferredLocations');
     if (current.includes(location)) {
       form.setValue(
-        'preferred_locations',
+        'preferredLocations',
         current.filter((l) => l !== location),
         { shouldValidate: true }
       );
     } else {
-      form.setValue('preferred_locations', [...current, location], { shouldValidate: true });
+      form.setValue('preferredLocations', [...current, location], { shouldValidate: true });
     }
   }
 
@@ -94,7 +94,7 @@ export function CareerGoalsStep({ initialData, onNext }: CareerGoalsStepProps) {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <FormField
               control={form.control}
-              name="target_roles"
+              name="targetRoles"
               render={() => (
                 <FormItem>
                   <FormLabel>Target Roles</FormLabel>
@@ -122,7 +122,7 @@ export function CareerGoalsStep({ initialData, onNext }: CareerGoalsStepProps) {
 
             <FormField
               control={form.control}
-              name="preferred_locations"
+              name="preferredLocations"
               render={() => (
                 <FormItem>
                   <FormLabel>Preferred Locations</FormLabel>

@@ -14,6 +14,7 @@ import {
   type ExperienceData,
   type EducationData,
   type WorkHistoryData,
+  type OnboardingStep,
 } from '@/lib/validations/onboarding';
 import { put, del } from '@vercel/blob';
 import crypto from 'crypto';
@@ -26,6 +27,7 @@ type ActionResult = {
 
 // Ensure user exists in database (create if not exists from Clerk data)
 async function ensureUserExists(userId: string): Promise<boolean> {
+  // First check if user already exists
   const existingUser = await db.query.users.findFirst({
     where: eq(users.clerk_id, userId),
   });
@@ -41,39 +43,70 @@ async function ensureUserExists(userId: string): Promise<boolean> {
   }
 
   try {
+    // Use onConflictDoNothing to handle race conditions
     await db.insert(users).values({
       clerk_id: clerkUser.id,
       email: clerkUser.emailAddresses[0]?.emailAddress ?? '',
-      first_name: clerkUser.firstName,
-      last_name: clerkUser.lastName,
-      image_url: clerkUser.imageUrl,
+      first_name: clerkUser.firstName ?? null,
+      last_name: clerkUser.lastName ?? null,
+      image_url: clerkUser.imageUrl ?? null,
       onboarding_completed: false,
-      onboarding_step: 0,
-    });
+      onboarding_step: ONBOARDING_STEPS.CAREER_GOALS,
+    }).onConflictDoNothing({ target: users.clerk_id });
+    
     return true;
-  } catch (error) {
-    console.error('Error creating user:', error);
+  } catch (error: any) {
+    // Log the actual error for debugging
+    console.error('Failed to create user:', {
+      message: error?.message,
+      code: error?.code,
+      detail: error?.detail,
+      constraint: error?.constraint,
+    });
+    
+    // Verify if user exists despite the error
+    const userCheck = await db.query.users.findFirst({
+      where: eq(users.clerk_id, userId),
+    });
+    
+    if (userCheck) {
+      console.log('User exists despite error - continuing');
+      return true;
+    }
+    
+    // User doesn't exist and insert failed - this is a real problem
+    console.error('CRITICAL: Cannot create user and user does not exist');
     return false;
   }
 }
 
 // Get current user's onboarding state
-export async function getOnboardingState() {
+export async function getOnboardingState(): Promise<{
+  step: OnboardingStep;
+  completed: boolean;
+  profile: any;
+}> {
   const { userId } = await auth();
 
   if (!userId) {
-    return { step: 0, completed: false, profile: null };
+    return { step: ONBOARDING_STEPS.CAREER_GOALS, completed: false, profile: null };
   }
 
   // Ensure user exists in database
-  await ensureUserExists(userId);
+  const userCreated = await ensureUserExists(userId);
+  
+  if (!userCreated) {
+    console.error('Could not ensure user exists, returning default state');
+    return { step: ONBOARDING_STEPS.CAREER_GOALS, completed: false, profile: null };
+  }
 
   const user = await db.query.users.findFirst({
     where: eq(users.clerk_id, userId),
   });
 
   if (!user) {
-    return { step: 0, completed: false, profile: null };
+    console.error('User not found after ensuring existence');
+    return { step: ONBOARDING_STEPS.CAREER_GOALS, completed: false, profile: null };
   }
 
   // Fetch existing profile if any
@@ -82,7 +115,7 @@ export async function getOnboardingState() {
   });
 
   return {
-    step: user.onboarding_step,
+    step: user.onboarding_step as OnboardingStep,
     completed: user.onboarding_completed,
     profile,
   };
@@ -119,8 +152,11 @@ export async function saveCareerGoals(data: CareerGoalsData): Promise<ActionResu
       await db
         .update(userProfiles)
         .set({
-          target_roles: result.data.target_roles,
-          preferred_locations: result.data.preferred_locations,
+          target_roles: result.data.targetRoles,
+          preferred_locations: result.data.preferredLocations,
+          salary_expectation_min: result.data.salaryMin,
+          salary_expectation_max: result.data.salaryMax,
+          bio: result.data.bio,
           updated_at: new Date(),
         })
         .where(eq(userProfiles.user_id, userId));
@@ -128,8 +164,11 @@ export async function saveCareerGoals(data: CareerGoalsData): Promise<ActionResu
       // Create new profile
       await db.insert(userProfiles).values({
         user_id: userId,
-        target_roles: result.data.target_roles,
-        preferred_locations: result.data.preferred_locations,
+        target_roles: result.data.targetRoles,
+        preferred_locations: result.data.preferredLocations,
+        salary_expectation_min: result.data.salaryMin,
+        salary_expectation_max: result.data.salaryMax,
+        bio: result.data.bio,
       });
     }
 
@@ -168,8 +207,8 @@ export async function saveExperience(data: ExperienceData): Promise<ActionResult
       .update(userProfiles)
       .set({
         years_of_experience: result.data.years_of_experience,
-        salary_expectation_min: result.data.salary_expectation_min ?? null,
-        salary_expectation_max: result.data.salary_expectation_max ?? null,
+        salary_expectation_min: result.data.salary_expectation_min,
+        salary_expectation_max: result.data.salary_expectation_max,
         updated_at: new Date(),
       })
       .where(eq(userProfiles.user_id, userId));
@@ -205,11 +244,8 @@ export async function saveEducation(data: EducationData): Promise<ActionResult> 
   }
 
   try {
-    // Transform null to undefined for gpa fields (Drizzle expects undefined, not null)
-    const educationData = result.data.education.map((entry) => ({
-      ...entry,
-      gpa: entry.gpa ?? undefined,
-    }));
+    // Use the education array from validated data
+    const educationData = result.data.education;
 
     await db
       .update(userProfiles)
@@ -250,10 +286,13 @@ export async function saveWorkHistory(data: WorkHistoryData): Promise<ActionResu
   }
 
   try {
+    // Use the work_history array from validated data
+    const workHistoryData = result.data.work_history;
+
     await db
       .update(userProfiles)
       .set({
-        work_history: result.data.work_history,
+        work_history: workHistoryData,
         updated_at: new Date(),
       })
       .where(eq(userProfiles.user_id, userId));
@@ -325,14 +364,26 @@ export async function completeOnboarding(): Promise<ActionResult> {
 }
 
 // Go back to previous step
-export async function goToPreviousStep(currentStep: number): Promise<ActionResult> {
+export async function goToPreviousStep(currentStep: OnboardingStep): Promise<ActionResult> {
   const { userId } = await auth();
 
   if (!userId) {
     return { success: false, error: 'Not authenticated' };
   }
 
-  const previousStep = Math.max(ONBOARDING_STEPS.CAREER_GOALS, currentStep - 1);
+  // Map current step to previous step
+  const stepOrder: OnboardingStep[] = [
+    ONBOARDING_STEPS.CAREER_GOALS,
+    ONBOARDING_STEPS.EXPERIENCE,
+    ONBOARDING_STEPS.EDUCATION,
+    ONBOARDING_STEPS.WORK_HISTORY,
+    ONBOARDING_STEPS.RESUME_UPLOAD,
+    ONBOARDING_STEPS.RESUME_REVIEW,
+    ONBOARDING_STEPS.COMPLETE,
+  ];
+
+  const currentIndex = stepOrder.indexOf(currentStep);
+  const previousStep = currentIndex > 0 ? stepOrder[currentIndex - 1] : stepOrder[0];
 
   try {
     await db

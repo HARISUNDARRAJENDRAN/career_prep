@@ -15,8 +15,8 @@ export const users = pgTable('users', {
 
   // Onboarding status
   onboarding_completed: boolean('onboarding_completed').default(false).notNull(),
-  // Step-by-step persistence: 0=welcome, 1=career goals, 2=experience, 3=education, 4=work history, 5=complete
-  onboarding_step: integer('onboarding_step').default(0).notNull(),
+  // Step-by-step persistence: stores the current step name
+  onboarding_step: varchar('onboarding_step', { length: 50 }).default('career_goals').notNull(),
 
   // Timestamps
   created_at: timestamp('created_at').defaultNow().notNull(),

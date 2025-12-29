@@ -13,44 +13,67 @@ import { CompleteStep } from './complete-step';
 import type { UserProfile } from '@/drizzle/schema/user-profiles';
 
 interface OnboardingWizardProps {
-  initialStep: number;
+  initialStep: OnboardingStep;
   profile: UserProfile | null | undefined;
 }
 
 export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps) {
-  const [currentStep, setCurrentStep] = useState<OnboardingStep>(
-    Math.max(ONBOARDING_STEPS.CAREER_GOALS, initialStep) as OnboardingStep
-  );
+  const [currentStep, setCurrentStep] = useState<OnboardingStep>(initialStep || ONBOARDING_STEPS.CAREER_GOALS);
   const [parsedResumeData, setParsedResumeData] = useState<any>(null);
 
-  // Calculate progress percentage (steps 1-5, welcome step 0 not counted)
-  const totalSteps = 5; // Career Goals, Experience, Education, Work History, Resume
-  const progressStep = Math.min(currentStep, ONBOARDING_STEPS.COMPLETE) - 1;
-  const progress = currentStep >= ONBOARDING_STEPS.COMPLETE
+  // Calculate progress percentage based on step order
+  const stepOrder: OnboardingStep[] = [
+    ONBOARDING_STEPS.CAREER_GOALS,
+    ONBOARDING_STEPS.EXPERIENCE,
+    ONBOARDING_STEPS.EDUCATION,
+    ONBOARDING_STEPS.WORK_HISTORY,
+    ONBOARDING_STEPS.RESUME_UPLOAD,
+    ONBOARDING_STEPS.RESUME_REVIEW,
+  ];
+  
+  const totalSteps = stepOrder.length;
+  const currentIndex = stepOrder.indexOf(currentStep);
+  const progress = currentStep === ONBOARDING_STEPS.COMPLETE
     ? 100
-    : Math.round((progressStep / totalSteps) * 100);
+    : Math.round(((currentIndex + 1) / totalSteps) * 100);
 
-  // Step navigation
+  // Step navigation using step order array
   function goToNext(data?: any) {
-    if (data && currentStep === ONBOARDING_STEPS.RESUME) {
+    if (data && currentStep === ONBOARDING_STEPS.RESUME_UPLOAD) {
       // Resume data returned - show review step
       setParsedResumeData(data);
     }
-    setCurrentStep((prev) => Math.min(prev + 1, ONBOARDING_STEPS.COMPLETE) as OnboardingStep);
+    setCurrentStep((prev) => {
+      const currentIdx = stepOrder.indexOf(prev);
+      if (currentIdx < stepOrder.length - 1) {
+        return stepOrder[currentIdx + 1];
+      }
+      return ONBOARDING_STEPS.COMPLETE;
+    });
   }
 
   function goToPrev() {
-    setCurrentStep((prev) => Math.max(prev - 1, ONBOARDING_STEPS.CAREER_GOALS) as OnboardingStep);
+    setCurrentStep((prev) => {
+      const currentIdx = stepOrder.indexOf(prev);
+      if (currentIdx > 0) {
+        return stepOrder[currentIdx - 1];
+      }
+      return stepOrder[0];
+    });
   }
 
-  // Get step indicator items
+  // Get step indicator items with display labels
   const stepItems = [
     { step: ONBOARDING_STEPS.CAREER_GOALS, label: 'Career Goals' },
     { step: ONBOARDING_STEPS.EXPERIENCE, label: 'Experience' },
     { step: ONBOARDING_STEPS.EDUCATION, label: 'Education' },
     { step: ONBOARDING_STEPS.WORK_HISTORY, label: 'Work History' },
-    { step: ONBOARDING_STEPS.RESUME, label: 'Resume' },
+    { step: ONBOARDING_STEPS.RESUME_UPLOAD, label: 'Resume' },
   ];
+
+  // Helper to get step index for comparisons
+  const getStepIndex = (step: OnboardingStep) => stepOrder.indexOf(step);
+  const currentStepIndex = getStepIndex(currentStep);
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 py-8">
@@ -58,35 +81,41 @@ export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps
       <div className="mb-8">
         <Progress value={progress} className="h-2" />
         <p className="text-sm text-muted-foreground text-center mt-2">
-          {currentStep >= ONBOARDING_STEPS.COMPLETE
+          {currentStep === ONBOARDING_STEPS.COMPLETE
             ? 'Complete!'
-            : `Step ${currentStep} of ${totalSteps}`}
+            : `Step ${currentStepIndex + 1} of ${totalSteps}`}
         </p>
       </div>
 
       {/* Step indicators */}
       <div className="flex justify-between mb-8">
-        {stepItems.map(({ step, label }) => (
-          <div
-            key={step}
-            className={`flex flex-col items-center ${
-              step <= currentStep ? 'text-primary' : 'text-muted-foreground'
-            }`}
-          >
+        {stepItems.map(({ step, label }, index) => {
+          const stepIndex = getStepIndex(step);
+          const isCompleted = stepIndex < currentStepIndex;
+          const isCurrent = step === currentStep;
+          
+          return (
             <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                step < currentStep
-                  ? 'bg-primary text-primary-foreground'
-                  : step === currentStep
-                  ? 'border-2 border-primary text-primary'
-                  : 'border-2 border-muted text-muted-foreground'
+              key={step}
+              className={`flex flex-col items-center ${
+                isCompleted || isCurrent ? 'text-primary' : 'text-muted-foreground'
               }`}
             >
-              {step < currentStep ? '✓' : step}
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                  isCompleted
+                    ? 'bg-primary text-primary-foreground'
+                    : isCurrent
+                    ? 'border-2 border-primary text-primary'
+                    : 'border-2 border-muted text-muted-foreground'
+                }`}
+              >
+                {isCompleted ? '✓' : index + 1}
+              </div>
+              <span className="text-xs mt-1 hidden sm:block">{label}</span>
             </div>
-            <span className="text-xs mt-1 hidden sm:block">{label}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Step content */}
@@ -94,8 +123,8 @@ export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps
         {currentStep === ONBOARDING_STEPS.CAREER_GOALS && (
           <CareerGoalsStep
             initialData={{
-              target_roles: profile?.target_roles ?? [],
-              preferred_locations: profile?.preferred_locations ?? [],
+              targetRoles: profile?.target_roles ?? [],
+              preferredLocations: profile?.preferred_locations ?? [],
             }}
             onNext={goToNext}
           />
@@ -129,11 +158,11 @@ export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps
           />
         )}
 
-        {currentStep === ONBOARDING_STEPS.RESUME && !parsedResumeData && (
+        {currentStep === ONBOARDING_STEPS.RESUME_UPLOAD && !parsedResumeData && (
           <ResumeUploadStep onNext={goToNext} onBack={goToPrev} />
         )}
 
-        {currentStep === ONBOARDING_STEPS.RESUME && parsedResumeData && (
+        {currentStep === ONBOARDING_STEPS.RESUME_UPLOAD && parsedResumeData && (
           <ResumeReviewStep
             extractedSkills={parsedResumeData.skills || []}
             projects={parsedResumeData.projects}
