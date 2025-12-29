@@ -15,7 +15,7 @@ import {
   type EducationData,
   type WorkHistoryData,
 } from '@/lib/validations/onboarding';
-import { put } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import crypto from 'crypto';
 import { normalizeSkills } from '@/lib/skills-normalizer';
 
@@ -381,14 +381,22 @@ export async function uploadResume(
       return { success: false, error: 'Invalid file type. Only PDF and DOCX are allowed.' };
     }
 
-    // Upload to Vercel Blob
-    // Note: Using 'public' access but with addRandomSuffix for unguessable URLs
-    // The random suffix makes URLs practically impossible to guess (security through obscurity)
-    // For true private access, consider using signed URLs or a different storage solution
+    // Upload to Vercel Blob TEMPORARILY for processing
+    // Security: Blob will be deleted immediately after parsing to protect PII
+    // We only store the extracted skills/text, not the original file
     const blob = await put(`resumes/${userId}/${file.name}`, file, {
       access: 'public',
-      addRandomSuffix: true, // Adds random string to URL for security
+      addRandomSuffix: true,
     });
+
+    // Helper to clean up blob after processing (success or failure)
+    const cleanupBlob = async () => {
+      try {
+        await del(blob.url);
+      } catch (e) {
+        console.warn('Failed to delete temporary resume blob:', e);
+      }
+    };
 
     // Send to Python parsing service with timeout handling
     const parseFormData = new FormData();
@@ -417,11 +425,15 @@ export async function uploadResume(
 
       const { raw_text, parsed_data } = await parseResponse.json();
 
-      // Update user profile with resume data
+      // SECURITY: Delete the blob immediately after parsing - we don't store original resumes
+      // This protects user PII (contact info, addresses, etc.)
+      await cleanupBlob();
+
+      // Update user profile with EXTRACTED data only (not the original file)
       await db
         .update(userProfiles)
         .set({
-          resume_url: blob.url,
+          // resume_url intentionally NOT stored - original file is deleted for privacy
           resume_filename: file.name,
           resume_text: raw_text,
           resume_parsed_data: parsed_data,
@@ -445,18 +457,18 @@ export async function uploadResume(
       clearTimeout(timeoutId);
 
       if (fetchError.name === 'AbortError') {
-        // Timeout - trigger background job instead
-        console.log('Resume parsing timeout, triggering background job...');
-
-        // TODO: Trigger background job using Trigger.dev (Phase 3.5)
-        // await triggerResumeParsingJob({ userId, blobUrl: blob.url });
+        // Timeout - clean up blob and notify user
+        await cleanupBlob();
+        console.log('Resume parsing timeout');
 
         return {
           success: false,
-          error: 'Resume is too large. We will process it in the background and notify you via email.',
+          error: 'Resume processing timed out. Please try with a smaller file or try again later.',
         };
       }
 
+      // Clean up blob on any parsing error
+      await cleanupBlob();
       throw fetchError;
     }
   } catch (error: any) {
@@ -485,12 +497,16 @@ export async function confirmResumeSkills(data: {
 
     // Insert user skills with normalization metadata
     for (const normalizedSkill of normalizedSkills) {
-      if (normalizedSkill.matched_skill_id) {
+      // Type guard: extract non-null values to satisfy TypeScript
+      const matchedSkillId = normalizedSkill.matched_skill_id;
+      const matchedSkillName = normalizedSkill.matched_skill_name;
+      
+      if (matchedSkillId && matchedSkillName) {
         await db
           .insert(userSkills)
           .values({
             user_id: userId,
-            skill_id: normalizedSkill.matched_skill_id,
+            skill_id: matchedSkillId,
             proficiency_level: 'practicing', // Default, will be verified in interview
             verification_metadata: {
               is_verified: false,
@@ -501,7 +517,7 @@ export async function confirmResumeSkills(data: {
               needs_interview_focus: normalizedSkill.confidence < 0.8,
               normalization_metadata: {
                 original_claim: normalizedSkill.original,
-                normalized_to: normalizedSkill.matched_skill_name,
+                normalized_to: matchedSkillName,
                 confidence: normalizedSkill.confidence,
               },
             },

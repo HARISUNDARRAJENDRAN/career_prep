@@ -79,6 +79,18 @@ export const userSkills = pgTable(
     verification_metadata: jsonb('verification_metadata').$type<{
       is_verified: boolean;
       verification_count: number;
+      // Source tracking
+      source?: 'resume' | 'manual' | 'interview';
+      claimed_at?: string;
+      resume_claim_validated?: boolean | null;
+      needs_interview_focus?: boolean;
+      // Normalization metadata from resume parsing
+      normalization_metadata?: {
+        original_claim: string;
+        normalized_to: string;
+        confidence: number;
+      };
+      // Verification proof from interviews
       latest_proof?: {
         interview_id: string;
         timestamp: string;
