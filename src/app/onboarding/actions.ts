@@ -381,10 +381,13 @@ export async function uploadResume(
       return { success: false, error: 'Invalid file type. Only PDF and DOCX are allowed.' };
     }
 
-    // Upload to Vercel Blob with PRIVATE access (Security Fix)
+    // Upload to Vercel Blob
+    // Note: Using 'public' access but with addRandomSuffix for unguessable URLs
+    // The random suffix makes URLs practically impossible to guess (security through obscurity)
+    // For true private access, consider using signed URLs or a different storage solution
     const blob = await put(`resumes/${userId}/${file.name}`, file, {
-      access: 'private', // Changed from 'public' - resumes contain PII
-      addRandomSuffix: true,
+      access: 'public',
+      addRandomSuffix: true, // Adds random string to URL for security
     });
 
     // Send to Python parsing service with timeout handling
