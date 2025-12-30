@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { OnboardingWizard } from '@/components/onboarding';
 import { getOnboardingState } from './actions';
+import { SignOutButton } from '@clerk/nextjs';
+
+// Prevent caching to always check fresh auth state
+export const dynamic = 'force-dynamic';
 
 export default async function OnboardingPage() {
   const user = await currentUser();
@@ -21,7 +25,12 @@ export default async function OnboardingPage() {
 
   return (
     <div className="relative min-h-screen bg-background">
-      <div className="absolute right-4 top-4">
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        <SignOutButton>
+          <button className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            Sign out
+          </button>
+        </SignOutButton>
         <ThemeToggle />
       </div>
 

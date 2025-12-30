@@ -27,7 +27,7 @@ type ActionResult = {
 
 // Ensure user exists in database (create if not exists from Clerk data)
 async function ensureUserExists(userId: string): Promise<boolean> {
-  // First check if user already exists
+  // First check if user already exists by clerk_id
   const existingUser = await db.query.users.findFirst({
     where: eq(users.clerk_id, userId),
   });
@@ -42,22 +42,56 @@ async function ensureUserExists(userId: string): Promise<boolean> {
     return false;
   }
 
+  const email = clerkUser.emailAddresses[0]?.emailAddress;
+  if (!email) {
+    console.error('No email found for Clerk user');
+    return false;
+  }
+
   try {
-    // Use onConflictDoNothing to handle race conditions
+    // Check if there's an orphaned user with the same email (e.g., user was deleted 
+    // from Clerk but not from DB, then re-signed up with same email)
+    const orphanedUser = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+
+    if (orphanedUser) {
+      // Delete the orphaned record - cascading deletes will clean up related tables
+      // (user_profiles, user_skills, interviews, etc.)
+      // We can't just update clerk_id because it's a primary key with foreign key references
+      console.log(`Found orphaned user with email ${email}, deleting old record and creating fresh one`);
+      await db.delete(users).where(eq(users.clerk_id, orphanedUser.clerk_id));
+      
+      // Now create fresh user record with new clerk_id
+      await db.insert(users).values({
+        clerk_id: clerkUser.id,
+        email: email,
+        first_name: clerkUser.firstName ?? null,
+        last_name: clerkUser.lastName ?? null,
+        image_url: clerkUser.imageUrl ?? null,
+        onboarding_completed: false,
+        onboarding_step: ONBOARDING_STEPS.CAREER_GOALS,
+      });
+      
+      console.log(`Successfully recreated user with email ${email}`);
+      return true;
+    }
+
+    // No orphaned user, create new record
     await db.insert(users).values({
       clerk_id: clerkUser.id,
-      email: clerkUser.emailAddresses[0]?.emailAddress ?? '',
+      email: email,
       first_name: clerkUser.firstName ?? null,
       last_name: clerkUser.lastName ?? null,
       image_url: clerkUser.imageUrl ?? null,
       onboarding_completed: false,
       onboarding_step: ONBOARDING_STEPS.CAREER_GOALS,
-    }).onConflictDoNothing({ target: users.clerk_id });
+    });
     
     return true;
   } catch (error: any) {
     // Log the actual error for debugging
-    console.error('Failed to create user:', {
+    console.error('Failed to create/update user:', {
       message: error?.message,
       code: error?.code,
       detail: error?.detail,
