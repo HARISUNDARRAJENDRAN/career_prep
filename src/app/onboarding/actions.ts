@@ -16,9 +16,9 @@ import {
   type WorkHistoryData,
   type OnboardingStep,
 } from '@/lib/validations/onboarding';
-import { put, del } from '@vercel/blob';
+// Vercel Blob not needed - we don't store resume files, only extracted data
 import crypto from 'crypto';
-import { normalizeSkills } from '@/lib/skills-normalizer';
+import { normalizeSkills, addSkillToCatalog } from '@/lib/skills-normalizer';
 
 type ActionResult = {
   success: boolean;
@@ -436,8 +436,8 @@ export async function goToPreviousStep(currentStep: OnboardingStep): Promise<Act
 }
 
 /**
- * Upload resume and trigger background parsing job
- * Returns immediately to prevent timeout on large files
+ * Upload resume and parse it using Python service
+ * File is NOT stored - only the extracted data is saved for privacy
  */
 export async function uploadResume(
   formData: FormData
@@ -466,24 +466,7 @@ export async function uploadResume(
       return { success: false, error: 'Invalid file type. Only PDF and DOCX are allowed.' };
     }
 
-    // Upload to Vercel Blob TEMPORARILY for processing
-    // Security: Blob will be deleted immediately after parsing to protect PII
-    // We only store the extracted skills/text, not the original file
-    const blob = await put(`resumes/${userId}/${file.name}`, file, {
-      access: 'public',
-      addRandomSuffix: true,
-    });
-
-    // Helper to clean up blob after processing (success or failure)
-    const cleanupBlob = async () => {
-      try {
-        await del(blob.url);
-      } catch (e) {
-        console.warn('Failed to delete temporary resume blob:', e);
-      }
-    };
-
-    // Send to Python parsing service with timeout handling
+    // Send directly to Python parsing service (no blob storage needed)
     const parseFormData = new FormData();
     parseFormData.append('file', file);
 
@@ -492,8 +475,13 @@ export async function uploadResume(
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
+      // Use Python resume parser service
+      const parseUrl = process.env.RESUME_PARSER_URL || 'http://localhost:8001/parse-resume';
+
+      console.log('Sending resume to parser at:', parseUrl);
+
       const parseResponse = await fetch(
-        process.env.RESUME_PARSER_URL || 'http://localhost:8001/parse-resume',
+        parseUrl,
         {
           method: 'POST',
           body: parseFormData,
@@ -505,27 +493,25 @@ export async function uploadResume(
 
       if (!parseResponse.ok) {
         const errorData = await parseResponse.json().catch(() => ({}));
+        console.error('Parser error response:', errorData);
         throw new Error(errorData.detail || 'Failed to parse resume');
       }
 
       const { raw_text, parsed_data } = await parseResponse.json();
 
-      // SECURITY: Delete the blob immediately after parsing - we don't store original resumes
-      // This protects user PII (contact info, addresses, etc.)
-      await cleanupBlob();
+      console.log('Resume parsed successfully, skills found:', parsed_data?.skills?.length || 0);
 
       // Update user profile with EXTRACTED data only (not the original file)
       await db
         .update(userProfiles)
         .set({
-          // resume_url intentionally NOT stored - original file is deleted for privacy
           resume_filename: file.name,
           resume_text: raw_text,
           resume_parsed_data: parsed_data,
           resume_uploaded_at: new Date(),
           updated_at: new Date(),
           // Initialize Vector DB flags (Phase 3.6 integration)
-          resume_is_embedded: false, // Not yet processed into Vector DB
+          resume_is_embedded: false,
           resume_embedded_at: null,
           resume_vector_metadata: {
             last_sync_hash: crypto.createHash('sha256').update(raw_text).digest('hex'),
@@ -542,8 +528,6 @@ export async function uploadResume(
       clearTimeout(timeoutId);
 
       if (fetchError.name === 'AbortError') {
-        // Timeout - clean up blob and notify user
-        await cleanupBlob();
         console.log('Resume parsing timeout');
 
         return {
@@ -552,8 +536,6 @@ export async function uploadResume(
         };
       }
 
-      // Clean up blob on any parsing error
-      await cleanupBlob();
       throw fetchError;
     }
   } catch (error: any) {
@@ -582,16 +564,22 @@ export async function confirmResumeSkills(data: {
 
     // Insert user skills with normalization metadata
     for (const normalizedSkill of normalizedSkills) {
-      // Type guard: extract non-null values to satisfy TypeScript
-      const matchedSkillId = normalizedSkill.matched_skill_id;
-      const matchedSkillName = normalizedSkill.matched_skill_name;
-      
-      if (matchedSkillId && matchedSkillName) {
+      let skillId = normalizedSkill.matched_skill_id;
+      let skillName = normalizedSkill.matched_skill_name;
+
+      // If skill not in catalog, add it automatically
+      if (!skillId && normalizedSkill.should_add_to_catalog) {
+        console.log(`Adding new skill to catalog: ${normalizedSkill.original}`);
+        skillId = await addSkillToCatalog(normalizedSkill.original);
+        skillName = normalizedSkill.original;
+      }
+
+      if (skillId && skillName) {
         await db
           .insert(userSkills)
           .values({
             user_id: userId,
-            skill_id: matchedSkillId,
+            skill_id: skillId,
             proficiency_level: 'practicing', // Default, will be verified in interview
             verification_metadata: {
               is_verified: false,
@@ -602,16 +590,12 @@ export async function confirmResumeSkills(data: {
               needs_interview_focus: normalizedSkill.confidence < 0.8,
               normalization_metadata: {
                 original_claim: normalizedSkill.original,
-                normalized_to: matchedSkillName,
-                confidence: normalizedSkill.confidence,
+                normalized_to: skillName,
+                confidence: normalizedSkill.confidence || 1.0,
               },
             },
           })
           .onConflictDoNothing();
-      } else if (normalizedSkill.should_add_to_catalog) {
-        // Skill not in catalog - optionally auto-add or flag for review
-        console.log(`New skill detected: ${normalizedSkill.original} (flagged for admin review)`);
-        // TODO: Store in pending_skills table for admin approval
       }
     }
 

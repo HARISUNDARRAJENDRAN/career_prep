@@ -74,10 +74,17 @@ dist/
 # Virtual environments
 python-services/venv/
 python-services/**/venv/
+python-services/resume-parser/venv/
 venv/
 .venv/
 env/
 .env/
+
+# Windows reserved names (nul, CON, PRN, etc.)
+nul
+CON
+PRN
+AUX
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -69,6 +69,7 @@ export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps
     { step: ONBOARDING_STEPS.EDUCATION, label: 'Education' },
     { step: ONBOARDING_STEPS.WORK_HISTORY, label: 'Work History' },
     { step: ONBOARDING_STEPS.RESUME_UPLOAD, label: 'Resume' },
+    { step: ONBOARDING_STEPS.RESUME_REVIEW, label: 'Review' },
   ];
 
   // Helper to get step index for comparisons
@@ -158,18 +159,25 @@ export function OnboardingWizard({ initialStep, profile }: OnboardingWizardProps
           />
         )}
 
-        {currentStep === ONBOARDING_STEPS.RESUME_UPLOAD && !parsedResumeData && (
+        {currentStep === ONBOARDING_STEPS.RESUME_UPLOAD && (
           <ResumeUploadStep onNext={goToNext} onBack={goToPrev} />
         )}
 
-        {currentStep === ONBOARDING_STEPS.RESUME_UPLOAD && parsedResumeData && (
+        {currentStep === ONBOARDING_STEPS.RESUME_REVIEW && parsedResumeData && (
           <ResumeReviewStep
             extractedSkills={parsedResumeData.skills || []}
             projects={parsedResumeData.projects}
             certifications={parsedResumeData.certifications}
             onNext={goToNext}
-            onBack={() => setParsedResumeData(null)}
+            onBack={() => {
+              setParsedResumeData(null);
+              goToPrev();
+            }}
           />
+        )}
+
+        {currentStep === ONBOARDING_STEPS.RESUME_REVIEW && !parsedResumeData && (
+          <ResumeUploadStep onNext={goToNext} onBack={goToPrev} />
         )}
 
         {currentStep === ONBOARDING_STEPS.COMPLETE && <CompleteStep />}

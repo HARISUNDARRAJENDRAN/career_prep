@@ -18,3 +18,6 @@ export * from './schema/jobs';
 // Sentinel + Strategist Agents Domain (Market Intelligence)
 export * from './schema/market';
 
+// Relations (for Drizzle Relational Queries)
+export * from './relations';
+

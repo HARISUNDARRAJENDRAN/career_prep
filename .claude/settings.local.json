@@ -5,7 +5,11 @@
       "mcp__plugin_context7_context7__get-library-docs",
       "Bash(npm run lint)",
       "Bash(npm run build)",
-      "Bash(npm ls)"
+      "Bash(npm ls)",
+      "Bash(curl:*)",
+      "Bash(grep:*)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(mkdir:*)"
     ]
   }
 }

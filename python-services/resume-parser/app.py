@@ -2,9 +2,13 @@ from fastapi import FastAPI, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import pymupdf  # PyMuPDF
 from docx import Document
-import openai
+from openai import OpenAI
 import os
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from parent .env file
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
 app = FastAPI()
 
@@ -16,7 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI client (v1.0+ API)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract text from PDF using PyMuPDF with password protection handling"""
@@ -71,7 +76,8 @@ Return ONLY valid JSON with these exact keys:
   "languages": ["English", "Spanish"]
 }}"""
 
-    response = openai.ChatCompletion.create(
+    # Use new OpenAI v1.0+ API
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a resume parsing assistant. Extract structured data from resumes and return ONLY valid JSON."},
@@ -81,7 +87,16 @@ Return ONLY valid JSON with these exact keys:
     )
 
     content = response.choices[0].message.content
-    return json.loads(content)
+
+    # Handle markdown code blocks in response
+    if content.startswith("```json"):
+        content = content[7:]
+    if content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+
+    return json.loads(content.strip())
 
 @app.post("/parse-resume")
 async def parse_resume(file: UploadFile):
@@ -103,6 +118,8 @@ async def parse_resume(file: UploadFile):
     # Parse with AI
     try:
         parsed_data = await parse_resume_with_ai(resume_text)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI parsing failed: {str(e)}")
 
