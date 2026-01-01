@@ -9,7 +9,8 @@
       "Bash(curl:*)",
       "Bash(grep:*)",
       "Bash(npx shadcn@latest add:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(npx drizzle-kit push:*)"
     ]
   }
 }

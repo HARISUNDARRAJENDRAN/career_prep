@@ -67,6 +67,7 @@ dist/
 # Drizzle ORM
 # ===================
 /src/drizzle/migrations/
+*.sql
 
 # ===================
 # Python (Resume Parser Service)
@@ -124,6 +125,7 @@ pip-delete-this-directory.txt
 # VSCode
 .vscode/
 *.code-workspace
+.cursor/
 
 # JetBrains IDEs (WebStorm, PyCharm)
 .idea/
@@ -185,6 +187,8 @@ logs/
 # ===================
 *.pem
 *.local
+*.cache
+.cache/
 
 # Temporary files
 tmp/
@@ -196,8 +200,25 @@ temp/
 # Docker (local volumes)
 # ===================
 postgres_data/
+docker-compose.override.yml
+*.dockerignore
 
 # ===================
-# Plan/Cursor Files (optional - remove if you want to track)
+# Trigger.dev
 # ===================
-# .cursor/
+.trigger/
+trigger.dev.log
+*.trigger.log
+
+# ===================
+# Cursor IDE
+# ===================
+.cursor/
+.cursorrules
+
+# ===================
+# Backup files
+# ===================
+*.bak
+*.backup
+*~

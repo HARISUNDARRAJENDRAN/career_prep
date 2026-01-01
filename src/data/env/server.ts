@@ -10,6 +10,11 @@ export const serverEnv = createEnv({
     BLOB_READ_WRITE_TOKEN: z.string().min(1).optional(),
     RESUME_PARSER_URL: z.string().url().optional(),
     ARCJET_KEY: z.string().min(1).optional(),
+
+    // Trigger.dev Configuration (Phase 3.5: Message Bus)
+    // Optional during development - events will be persisted but not dispatched
+    TRIGGER_SECRET_KEY: z.string().min(1).optional(),
+    TRIGGER_API_URL: z.string().url().optional(),
   },
   experimental__runtimeEnv: process.env,
 });

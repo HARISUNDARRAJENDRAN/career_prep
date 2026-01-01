@@ -18,6 +18,9 @@ export * from './schema/jobs';
 // Sentinel + Strategist Agents Domain (Market Intelligence)
 export * from './schema/market';
 
+// Agent Orchestration Domain (Message Bus)
+export * from './schema/agent-events';
+
 // Relations (for Drizzle Relational Queries)
 export * from './relations';
 

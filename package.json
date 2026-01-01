@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:trigger": "npx trigger.dev@latest dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -37,6 +38,7 @@
     "@t3-oss/env-nextjs": "^0.13.10",
     "@tabler/icons-react": "^3.36.0",
     "@tanstack/react-table": "^8.21.3",
+    "@trigger.dev/sdk": "4.3.1",
     "@vercel/blob": "^2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -58,6 +60,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@trigger.dev/build": "4.3.1",
     "@types/node": "^20",
     "@types/pg": "^8.16.0",
     "@types/react": "^19",

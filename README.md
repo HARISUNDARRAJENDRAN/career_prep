@@ -68,6 +68,11 @@ npm run db:push
 npm run dev
 ```
 
+7. Start Trigger.dev dev server (in a separate terminal):
+```bash
+npm run dev:trigger
+```
+
 Open [http://localhost:3000](http://localhost:3000) to view the application.
 
 ### Resume Parser Service (Optional)
@@ -86,6 +91,7 @@ uvicorn app:app --reload --port 8000
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start development server with Turbopack |
+| `npm run dev:trigger` | Start Trigger.dev dev server for background jobs |
 | `npm run build` | Production build |
 | `npm run start` | Start production server |
 | `npm run lint` | Run ESLint |
@@ -119,7 +125,8 @@ career_prep/
 ├── python-services/           # Python microservices
 │   └── resume-parser/         # Resume parsing with OpenAI
 ├── docker-compose.yml         # PostgreSQL container
-└── drizzle.config.ts          # Drizzle Kit configuration
+├── drizzle.config.ts          # Drizzle Kit configuration
+└── trigger.config.ts          # Trigger.dev configuration
 ```
 
 ## Database Schema
@@ -140,6 +147,27 @@ See `env.example` for all required environment variables. Key services needed:
 - **Arcjet**: Security ([app.arcjet.com](https://app.arcjet.com))
 - **Vercel Blob**: File storage (Vercel Dashboard)
 - **OpenAI**: Resume parsing ([platform.openai.com](https://platform.openai.com))
+- **Trigger.dev**: Background job orchestration ([trigger.dev](https://trigger.dev))
+
+### Required Environment Variables
+
+```env
+# Database
+DATABASE_URL=postgresql://career_prep:career_prep_password@localhost:5432/career_prep_db
+
+# Authentication
+CLERK_SECRET_KEY=sk_test_...
+CLERK_WEBHOOK_SECRET=whsec_...
+
+# Background Jobs
+TRIGGER_SECRET_KEY=tr_dev_...
+
+# Optional
+OPENAI_API_KEY=sk-...
+BLOB_READ_WRITE_TOKEN=vercel_blob_...
+ARCJET_KEY=ajkey_...
+RESUME_PARSER_URL=http://localhost:8001
+```
 
 ## Setting Up Clerk Webhook
 

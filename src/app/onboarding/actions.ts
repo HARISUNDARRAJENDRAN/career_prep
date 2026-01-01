@@ -19,6 +19,7 @@ import {
 // Vercel Blob not needed - we don't store resume files, only extracted data
 import crypto from 'crypto';
 import { normalizeSkills, addSkillToCatalog } from '@/lib/skills-normalizer';
+import { publishAgentEvent } from '@/lib/agents/message-bus';
 
 type ActionResult = {
   success: boolean;
@@ -381,6 +382,7 @@ export async function completeOnboarding(): Promise<ActionResult> {
   }
 
   try {
+    // Update user's onboarding status
     await db
       .update(users)
       .set({
@@ -389,6 +391,35 @@ export async function completeOnboarding(): Promise<ActionResult> {
         updated_at: new Date(),
       })
       .where(eq(users.clerk_id, userId));
+
+    // Fetch user profile data for the event
+    const userProfile = await db.query.userProfiles.findFirst({
+      where: eq(userProfiles.user_id, userId),
+    });
+
+    // Count user's skills
+    const userSkillsCount = await db.query.userSkills.findMany({
+      where: eq(userSkills.user_id, userId),
+    });
+
+    // Publish ONBOARDING_COMPLETED event to trigger initial roadmap generation
+    // This event is handled by the Architect Agent to create a personalized learning path
+    try {
+      await publishAgentEvent({
+        type: 'ONBOARDING_COMPLETED',
+        payload: {
+          user_id: userId,
+          target_roles: userProfile?.target_roles || [],
+          skills_count: userSkillsCount.length,
+          has_resume: !!userProfile?.resume_text,
+        },
+      });
+      console.log('[Onboarding] Published ONBOARDING_COMPLETED event');
+    } catch (eventError) {
+      // Log but don't fail onboarding if event publishing fails
+      // Events are persisted to DB and can be retried
+      console.error('[Onboarding] Failed to publish event:', eventError);
+    }
 
     return { success: true };
   } catch (error) {
