@@ -23,6 +23,10 @@ import {
   Smile,
   Frown,
   Meh,
+  MessageSquare,
+  Target,
+  AlertTriangle,
+  Lightbulb,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -75,10 +79,28 @@ export default async function InterviewSummaryPage({
       emotions?: Record<string, number>;
     }>;
     emotion_summary?: Record<string, number>;
+    analysis?: {
+      overall_notes?: string;
+      communication_score?: number;
+      self_awareness_score?: number;
+      career_alignment_score?: number;
+      skills_assessed?: Array<{
+        skill_name: string;
+        claimed_level: string;
+        verified_level: string;
+        gap_identified: boolean;
+        confidence: number;
+        evidence?: string;
+        recommendations?: string[];
+      }>;
+    };
+    interrupted?: boolean;
   } | null;
 
   const transcript = rawData?.transcript || [];
   const emotionSummary = rawData?.emotion_summary || {};
+  const analysis = rawData?.analysis;
+  const wasInterrupted = rawData?.interrupted || false;
 
   // Calculate stats
   const userMessages = transcript.filter((t) => t.speaker === 'user');
@@ -159,7 +181,13 @@ export default async function InterviewSummaryPage({
           <CardContent>
             <div className="text-3xl font-bold">{durationMinutes} min</div>
             <p className="text-sm text-muted-foreground mt-1">
-              {userMessages.length} responses • {agentMessages.length} questions
+              {transcript.length > 0
+                ? `${userMessages.length} responses • ${agentMessages.length} questions`
+                : analysis?.skills_assessed
+                  ? `${analysis.skills_assessed.length} skills assessed`
+                  : wasInterrupted
+                    ? 'Session ended unexpectedly'
+                    : 'Session completed'}
             </p>
           </CardContent>
         </Card>
@@ -189,6 +217,88 @@ export default async function InterviewSummaryPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Analysis Summary */}
+      {analysis && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Lightbulb className="h-5 w-5 text-amber-500" />
+              AI Analysis Summary
+            </CardTitle>
+            {wasInterrupted && (
+              <CardDescription className="flex items-center gap-2 text-amber-600">
+                <AlertTriangle className="h-4 w-4" />
+                Session ended unexpectedly - analysis based on available data
+              </CardDescription>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {analysis.overall_notes && (
+              <div className="p-4 bg-muted rounded-lg">
+                <p className="text-sm leading-relaxed">{analysis.overall_notes}</p>
+              </div>
+            )}
+
+            {/* Score Breakdown */}
+            <div className="grid gap-4 md:grid-cols-3">
+              {analysis.communication_score !== undefined && (
+                <div className="text-center p-3 border rounded-lg">
+                  <MessageSquare className="h-5 w-5 mx-auto text-blue-500 mb-1" />
+                  <div className="text-2xl font-bold">{analysis.communication_score}/10</div>
+                  <p className="text-xs text-muted-foreground">Communication</p>
+                </div>
+              )}
+              {analysis.self_awareness_score !== undefined && (
+                <div className="text-center p-3 border rounded-lg">
+                  <Brain className="h-5 w-5 mx-auto text-purple-500 mb-1" />
+                  <div className="text-2xl font-bold">{analysis.self_awareness_score}/10</div>
+                  <p className="text-xs text-muted-foreground">Self-Awareness</p>
+                </div>
+              )}
+              {analysis.career_alignment_score !== undefined && (
+                <div className="text-center p-3 border rounded-lg">
+                  <Target className="h-5 w-5 mx-auto text-green-500 mb-1" />
+                  <div className="text-2xl font-bold">{analysis.career_alignment_score}/10</div>
+                  <p className="text-xs text-muted-foreground">Career Alignment</p>
+                </div>
+              )}
+            </div>
+
+            {/* Skills with Gaps */}
+            {analysis.skills_assessed && analysis.skills_assessed.filter(s => s.gap_identified).length > 0 && (
+              <div>
+                <h4 className="font-medium mb-2 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  Areas for Improvement
+                </h4>
+                <div className="space-y-2">
+                  {analysis.skills_assessed
+                    .filter(s => s.gap_identified)
+                    .map((skill) => (
+                      <div key={skill.skill_name} className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">{skill.skill_name}</span>
+                          <Badge variant="outline" className="text-amber-600">
+                            {skill.claimed_level} → {skill.verified_level}
+                          </Badge>
+                        </div>
+                        {skill.evidence && (
+                          <p className="text-xs text-muted-foreground mb-1">{skill.evidence}</p>
+                        )}
+                        {skill.recommendations && skill.recommendations.length > 0 && (
+                          <p className="text-xs text-blue-600 dark:text-blue-400">
+                            💡 {skill.recommendations[0]}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Skill Verifications */}
       {verifications.length > 0 && (
@@ -281,9 +391,19 @@ export default async function InterviewSummaryPage({
         </CardHeader>
         <CardContent>
           {transcript.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No transcript available
-            </p>
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">
+                {wasInterrupted
+                  ? 'Transcript not captured due to unexpected disconnection'
+                  : 'No transcript available'}
+              </p>
+              {analysis && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  However, the AI was able to analyze the conversation before it ended.
+                  See the AI Analysis Summary above for details.
+                </p>
+              )}
+            </div>
           ) : (
             <div className="space-y-4 max-h-[400px] overflow-y-auto">
               {transcript.slice(0, 10).map((msg, index) => (

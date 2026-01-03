@@ -56,6 +56,8 @@ export const interviews = pgTable('interviews', {
     emotion_summary?: Record<string, number>;
     confidence_scores?: Record<string, number>;
     hume_response?: Record<string, unknown>;
+    interrupted?: boolean; // Flag for unexpected disconnections
+    last_autosave_at?: string; // Timestamp of last auto-save
     // Analysis results from interview analyzer job
     analysis?: {
       skills_assessed: Array<{

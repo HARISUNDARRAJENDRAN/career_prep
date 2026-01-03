@@ -3,7 +3,6 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '@/drizzle/db';
 import { interviews } from '@/drizzle/schema';
 import { eq, and } from 'drizzle-orm';
-import { publishAgentEvent } from '@/lib/agents/message-bus';
 import { z } from 'zod';
 
 interface RouteParams {
@@ -17,18 +16,18 @@ const transcriptEntrySchema = z.object({
   emotions: z.record(z.string(), z.number()).optional(),
 });
 
-const completeInterviewSchema = z.object({
+const autosaveInterviewSchema = z.object({
   transcript: z.array(transcriptEntrySchema),
   emotion_summary: z.record(z.string(), z.number()).optional(),
-  duration_seconds: z.number().int().nonnegative(), // Allow 0 for very short sessions or recovery
-  interrupted: z.boolean().optional(), // Flag for unexpected disconnections
+  duration_seconds: z.number().int().nonnegative(),
 });
 
 /**
- * POST /api/interviews/[id]/complete
- * Complete an interview, save the transcript, and trigger analysis
+ * PATCH /api/interviews/[id]/autosave
+ * Auto-save interview transcript without completing the interview.
+ * Used for periodic saves during the session to prevent data loss.
  */
-export async function POST(req: Request, { params }: RouteParams) {
+export async function PATCH(req: Request, { params }: RouteParams) {
   try {
     const { userId } = await auth();
     if (!userId) {
@@ -38,7 +37,7 @@ export async function POST(req: Request, { params }: RouteParams) {
     const { id } = await params;
     const body = await req.json();
 
-    const validationResult = completeInterviewSchema.safeParse(body);
+    const validationResult = autosaveInterviewSchema.safeParse(body);
     if (!validationResult.success) {
       return NextResponse.json(
         { error: 'Invalid request', details: validationResult.error.issues },
@@ -60,62 +59,45 @@ export async function POST(req: Request, { params }: RouteParams) {
       );
     }
 
-    if (interview.status === 'completed') {
+    // Only allow autosave for in_progress interviews
+    if (interview.status !== 'in_progress') {
       return NextResponse.json(
-        { error: 'Interview already completed' },
+        { error: 'Interview is not in progress' },
         { status: 400 }
       );
     }
 
-    // Allow completing from 'in_progress' or 'scheduled' (in case start wasn't called)
-    if (interview.status !== 'in_progress' && interview.status !== 'scheduled') {
-      return NextResponse.json(
-        { error: 'Interview cannot be completed from current status' },
-        { status: 400 }
-      );
-    }
-
-    // Preserve existing raw_data (like analysis results from autosave)
+    // Get existing raw_data and merge with new transcript
     const existingRawData = (interview.raw_data as Record<string, unknown>) || {};
 
-    // Update interview with transcript and mark as completed
+    // Update interview with latest transcript (auto-save, not complete)
     const [updated] = await db
       .update(interviews)
       .set({
-        status: 'completed',
         duration_seconds: data.duration_seconds,
         raw_data: {
-          ...existingRawData, // Preserve any existing data (like analysis)
+          ...existingRawData,
           transcript: data.transcript,
           emotion_summary: data.emotion_summary,
-          interrupted: data.interrupted || false,
+          last_autosave_at: new Date().toISOString(),
         },
-        completed_at: new Date(),
         updated_at: new Date(),
       })
       .where(eq(interviews.id, id))
       .returning();
 
-    // Publish event for post-interview analysis (Phase 5.5)
-    try {
-      await publishAgentEvent({
-        type: 'INTERVIEW_COMPLETED',
-        payload: {
-          interview_id: id,
-          user_id: userId,
-          duration_minutes: Math.round(data.duration_seconds / 60),
-          interview_type: interview.type,
-        },
-      });
-      console.log(`[Interviews Complete API] Published INTERVIEW_COMPLETED event for ${id}`);
-    } catch (eventError) {
-      // Log but don't fail the request if event publishing fails
-      console.error('[Interviews Complete API] Failed to publish event:', eventError);
-    }
+    console.log(`[Interviews Autosave API] Auto-saved transcript for interview ${id} (${data.transcript.length} messages)`);
 
-    return NextResponse.json({ interview: updated });
+    return NextResponse.json({
+      success: true,
+      interview: {
+        id: updated.id,
+        status: updated.status,
+        duration_seconds: updated.duration_seconds,
+      }
+    });
   } catch (error) {
-    console.error('[Interviews Complete API] Error:', error);
+    console.error('[Interviews Autosave API] Error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
