@@ -11,9 +11,9 @@
 # ===================
 # Planning & Dev Docs (not for public repo)
 # ===================
-CLAUDE.md
-NEXT_PHASE_PLAN.md
-PHASE_1.5_RESUME_UPLOAD.md
+# Ignore all markdown files except README.md
+*.md
+!README.md
 
 # ===================
 # Dependencies

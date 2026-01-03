@@ -56,6 +56,22 @@ export const interviews = pgTable('interviews', {
     emotion_summary?: Record<string, number>;
     confidence_scores?: Record<string, number>;
     hume_response?: Record<string, unknown>;
+    // Analysis results from interview analyzer job
+    analysis?: {
+      skills_assessed: Array<{
+        skill_name: string;
+        claimed_level: string;
+        verified_level: 'learning' | 'practicing' | 'proficient' | 'expert';
+        confidence: number;
+        evidence: string;
+        gap_identified: boolean;
+        recommendations: string[];
+      }>;
+      overall_notes: string;
+      career_alignment_score: number;
+      self_awareness_score: number;
+      communication_score: number;
+    };
   }>(),
 
   // Timestamps

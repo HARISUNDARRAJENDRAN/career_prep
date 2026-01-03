@@ -1,7 +1,7 @@
 import { currentUser } from '@clerk/nextjs/server';
 import { db } from '@/drizzle/db';
-import { users, userProfiles, userSkills } from '@/drizzle/schema';
-import { eq, count } from 'drizzle-orm';
+import { users, userProfiles, userSkills, interviews, jobApplications } from '@/drizzle/schema';
+import { eq, count, and, gte, desc } from 'drizzle-orm';
 import {
   Card,
   CardContent,
@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Button } from '@/components/ui/button';
+import Link from 'next/link';
 import {
   Target,
   TrendingUp,
@@ -19,9 +21,10 @@ import {
   CheckCircle2,
   Clock,
   Zap,
+  AlertTriangle,
+  ArrowRight,
 } from 'lucide-react';
 import { SkillsRadarChart } from '@/components/dashboard/skills-radar-chart';
-import { ProgressChart } from '@/components/dashboard/progress-chart';
 
 export default async function DashboardPage() {
   const user = await currentUser();
@@ -38,14 +41,61 @@ export default async function DashboardPage() {
     },
   });
 
+  // Fetch all interviews for the user
+  const userInterviews = await db.query.interviews.findMany({
+    where: eq(interviews.user_id, user!.id),
+    orderBy: [desc(interviews.created_at)],
+  });
+
+  // Fetch job applications for this month
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const monthlyApplications = await db.query.jobApplications.findMany({
+    where: and(
+      eq(jobApplications.user_id, user!.id),
+      gte(jobApplications.created_at, startOfMonth)
+    ),
+  });
+
   // Calculate stats
   const totalSkills = skills.length;
   const verifiedSkills = skills.filter(
     (s) => s.verification_metadata?.is_verified
   ).length;
+  const gapsFound = skills.filter(
+    (s) => s.verification_metadata?.gap_identified
+  ).length;
   const targetRoles = profile?.target_roles || [];
   const verificationProgress =
     totalSkills > 0 ? Math.round((verifiedSkills / totalSkills) * 100) : 0;
+
+  // Interview stats
+  const completedInterviews = userInterviews.filter(i => i.status === 'completed').length;
+  const realityCheckCompleted = userInterviews.some(
+    i => i.type === 'reality_check' && i.status === 'completed'
+  );
+  const weeklySprintCount = userInterviews.filter(
+    i => i.type === 'weekly_sprint' && i.status === 'completed'
+  ).length;
+  const latestInterview = userInterviews[0];
+
+  // Job application stats
+  const totalApplicationsThisMonth = monthlyApplications.length;
+  const activeApplications = monthlyApplications.filter(
+    a => a.status === 'applied' || a.status === 'interviewing'
+  ).length;
+
+  // Determine next steps based on user progress
+  const nextSteps = getNextSteps({
+    hasSkills: totalSkills > 0,
+    realityCheckCompleted,
+    verifiedSkills,
+    totalSkills,
+    gapsFound,
+    hasRoadmap: false, // TODO: Check if user has roadmap
+  });
 
   return (
     <div className="space-y-6">
@@ -93,9 +143,11 @@ export default async function DashboardPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">{completedInterviews}</div>
             <p className="text-xs text-muted-foreground">
-              Reality check pending
+              {realityCheckCompleted
+                ? `${weeklySprintCount} weekly sprint${weeklySprintCount !== 1 ? 's' : ''}`
+                : 'Reality check pending'}
             </p>
           </CardContent>
         </Card>
@@ -106,8 +158,12 @@ export default async function DashboardPage() {
             <Briefcase className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
-            <p className="text-xs text-muted-foreground">This month</p>
+            <div className="text-2xl font-bold">{totalApplicationsThisMonth}</div>
+            <p className="text-xs text-muted-foreground">
+              {activeApplications > 0
+                ? `${activeApplications} active`
+                : 'This month'}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -146,8 +202,8 @@ export default async function DashboardPage() {
 
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                  <CheckCircle2 className="h-5 w-5 text-primary" />
+                <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${verifiedSkills > 0 ? 'bg-green-500/10' : 'bg-primary/10'}`}>
+                  <CheckCircle2 className={`h-5 w-5 ${verifiedSkills > 0 ? 'text-green-500' : 'text-primary'}`} />
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium">Skills Verified</p>
@@ -157,26 +213,62 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
+              {gapsFound > 0 && (
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500/10">
+                    <AlertTriangle className="h-5 w-5 text-orange-500" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Gaps Found</p>
+                    <p className="text-xs text-muted-foreground">
+                      {gapsFound} skill{gapsFound !== 1 ? 's' : ''} need improvement
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/skills">
+                      View <ArrowRight className="ml-1 h-3 w-3" />
+                    </Link>
+                  </Button>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500/10">
-                  <Clock className="h-5 w-5 text-orange-500" />
+                <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${realityCheckCompleted ? 'bg-green-500/10' : 'bg-orange-500/10'}`}>
+                  {realityCheckCompleted ? (
+                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  ) : (
+                    <Clock className="h-5 w-5 text-orange-500" />
+                  )}
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium">Reality Check</p>
                   <p className="text-xs text-muted-foreground">
-                    Schedule your first interview
+                    {realityCheckCompleted
+                      ? 'Completed'
+                      : 'Schedule your first interview'}
                   </p>
                 </div>
+                {!realityCheckCompleted && (
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/interviews/new">
+                      Start <ArrowRight className="ml-1 h-3 w-3" />
+                    </Link>
+                  </Button>
+                )}
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10">
-                  <Zap className="h-5 w-5 text-blue-500" />
+                <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${weeklySprintCount > 0 ? 'bg-blue-500/10' : 'bg-muted'}`}>
+                  <Zap className={`h-5 w-5 ${weeklySprintCount > 0 ? 'text-blue-500' : 'text-muted-foreground'}`} />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium">Weekly Sprint</p>
+                  <p className="text-sm font-medium">Weekly Sprints</p>
                   <p className="text-xs text-muted-foreground">
-                    Available after Reality Check
+                    {weeklySprintCount > 0
+                      ? `${weeklySprintCount} completed`
+                      : realityCheckCompleted
+                        ? 'Ready to start'
+                        : 'Available after Reality Check'}
                   </p>
                 </div>
               </div>
@@ -196,41 +288,34 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-                  1
+              {nextSteps.map((step, index) => (
+                <div key={step.id} className="flex items-start gap-3">
+                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+                    step.completed
+                      ? 'bg-green-500 text-white'
+                      : index === 0
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted'
+                  }`}>
+                    {step.completed ? <CheckCircle2 className="h-3 w-3" /> : index + 1}
+                  </div>
+                  <div className="flex-1">
+                    <p className={`font-medium ${step.completed ? 'line-through text-muted-foreground' : ''}`}>
+                      {step.title}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {step.description}
+                    </p>
+                  </div>
+                  {step.href && !step.completed && (
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link href={step.href}>
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  )}
                 </div>
-                <div>
-                  <p className="font-medium">Complete Reality Check Interview</p>
-                  <p className="text-sm text-muted-foreground">
-                    A 1-hour voice interview to benchmark your skills
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                  2
-                </div>
-                <div>
-                  <p className="font-medium">Review Your Roadmap</p>
-                  <p className="text-sm text-muted-foreground">
-                    Personalized learning path based on your goals
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                  3
-                </div>
-                <div>
-                  <p className="font-medium">Explore Job Opportunities</p>
-                  <p className="text-sm text-muted-foreground">
-                    AI-matched jobs from Jooble & Adzuna
-                  </p>
-                </div>
-              </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -249,21 +334,26 @@ export default async function DashboardPage() {
                   No skills added yet. Upload your resume or add skills manually.
                 </p>
               ) : (
-                skills.slice(0, 12).map((userSkill) => (
-                  <Badge
-                    key={userSkill.id}
-                    variant={
-                      userSkill.verification_metadata?.is_verified
-                        ? 'default'
-                        : 'secondary'
-                    }
-                  >
-                    {userSkill.skill?.name || 'Unknown'}
-                    {userSkill.verification_metadata?.is_verified && (
-                      <CheckCircle2 className="ml-1 h-3 w-3" />
-                    )}
-                  </Badge>
-                ))
+                skills.slice(0, 12).map((userSkill) => {
+                  const hasGap = userSkill.verification_metadata?.gap_identified;
+                  const isVerified = userSkill.verification_metadata?.is_verified;
+
+                  return (
+                    <Badge
+                      key={userSkill.id}
+                      variant={hasGap ? 'destructive' : isVerified ? 'default' : 'secondary'}
+                      className={hasGap ? 'bg-orange-500 hover:bg-orange-600' : ''}
+                    >
+                      {userSkill.skill?.name || 'Unknown'}
+                      {isVerified && !hasGap && (
+                        <CheckCircle2 className="ml-1 h-3 w-3" />
+                      )}
+                      {hasGap && (
+                        <AlertTriangle className="ml-1 h-3 w-3" />
+                      )}
+                    </Badge>
+                  );
+                })
               )}
               {skills.length > 12 && (
                 <Badge variant="outline">+{skills.length - 12} more</Badge>
@@ -274,4 +364,90 @@ export default async function DashboardPage() {
       </div>
     </div>
   );
+}
+
+// Helper function to determine next steps based on user progress
+interface NextStep {
+  id: string;
+  title: string;
+  description: string;
+  href?: string;
+  completed: boolean;
+}
+
+function getNextSteps(progress: {
+  hasSkills: boolean;
+  realityCheckCompleted: boolean;
+  verifiedSkills: number;
+  totalSkills: number;
+  gapsFound: number;
+  hasRoadmap: boolean;
+}): NextStep[] {
+  const steps: NextStep[] = [];
+
+  // Step 1: Add skills if none exist
+  if (!progress.hasSkills) {
+    steps.push({
+      id: 'add-skills',
+      title: 'Add Your Skills',
+      description: 'Upload your resume or add skills manually to get started',
+      href: '/onboarding',
+      completed: false,
+    });
+  } else {
+    steps.push({
+      id: 'add-skills',
+      title: 'Skills Added',
+      description: `${progress.totalSkills} skills in your profile`,
+      completed: true,
+    });
+  }
+
+  // Step 2: Complete Reality Check
+  steps.push({
+    id: 'reality-check',
+    title: 'Complete Reality Check Interview',
+    description: progress.realityCheckCompleted
+      ? 'Skills verified through interview'
+      : 'A 30-minute voice interview to benchmark your skills',
+    href: progress.realityCheckCompleted ? undefined : '/interviews/new',
+    completed: progress.realityCheckCompleted,
+  });
+
+  // Step 3: Address skill gaps (if any found)
+  if (progress.gapsFound > 0) {
+    steps.push({
+      id: 'address-gaps',
+      title: 'Address Skill Gaps',
+      description: `${progress.gapsFound} skill${progress.gapsFound !== 1 ? 's' : ''} need improvement`,
+      href: '/skills',
+      completed: false,
+    });
+  } else if (progress.realityCheckCompleted) {
+    steps.push({
+      id: 'review-roadmap',
+      title: 'Review Your Roadmap',
+      description: 'Personalized learning path based on your goals',
+      href: '/roadmap',
+      completed: false,
+    });
+  } else {
+    steps.push({
+      id: 'review-roadmap',
+      title: 'Review Your Roadmap',
+      description: 'Available after Reality Check interview',
+      completed: false,
+    });
+  }
+
+  // Step 4: Explore jobs
+  steps.push({
+    id: 'explore-jobs',
+    title: 'Explore Job Opportunities',
+    description: 'AI-matched jobs from Jooble & Adzuna',
+    href: '/jobs',
+    completed: false,
+  });
+
+  return steps.slice(0, 4); // Max 4 steps
 }

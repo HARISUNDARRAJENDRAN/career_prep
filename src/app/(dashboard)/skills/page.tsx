@@ -19,8 +19,12 @@ import {
   Plus,
   Filter,
   Search,
+  AlertTriangle,
+  TrendingUp,
+  ArrowRight,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import Link from 'next/link';
 
 const proficiencyColors: Record<string, string> = {
   learning: 'bg-blue-500',
@@ -63,6 +67,9 @@ export default async function SkillsPage() {
   const verifiedSkills = skills.filter(
     (s) => s.verification_metadata?.is_verified
   ).length;
+  const gapsFound = skills.filter(
+    (s) => s.verification_metadata?.gap_identified
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -75,14 +82,22 @@ export default async function SkillsPage() {
             Manage and verify your professional skills.
           </p>
         </div>
-        <Button>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Skill
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href="/interviews/new">
+              <TrendingUp className="mr-2 h-4 w-4" />
+              Verify Skills
+            </Link>
+          </Button>
+          <Button>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Skill
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Skills</CardTitle>
@@ -111,8 +126,21 @@ export default async function SkillsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Gaps Found</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{gapsFound}</div>
+            <p className="text-xs text-muted-foreground">
+              Need improvement
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending</CardTitle>
-            <Clock className="h-4 w-4 text-orange-500" />
+            <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalSkills - verifiedSkills}</div>
@@ -168,50 +196,99 @@ export default async function SkillsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {categorySkills.map((userSkill) => (
-                    <div
-                      key={userSkill.id}
-                      className="flex items-center gap-4 rounded-lg border p-4"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium">
-                            {userSkill.skill?.name || 'Unknown Skill'}
-                          </h4>
-                          {userSkill.verification_metadata?.is_verified ? (
-                            <Badge
-                              variant="default"
-                              className="bg-green-500 hover:bg-green-600"
-                            >
-                              <CheckCircle2 className="mr-1 h-3 w-3" />
-                              Verified
+                  {categorySkills.map((userSkill) => {
+                    const metadata = userSkill.verification_metadata;
+                    const hasGap = metadata?.gap_identified;
+                    const isVerified = metadata?.is_verified;
+                    const verifiedLevel = metadata?.verified_level as string | undefined;
+                    const recommendations = (metadata as { recommendations?: string[] })?.recommendations;
+
+                    return (
+                      <div
+                        key={userSkill.id}
+                        className={`rounded-lg border p-4 ${hasGap ? 'border-orange-200 bg-orange-50 dark:border-orange-900 dark:bg-orange-950' : ''}`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-medium">
+                                {userSkill.skill?.name || 'Unknown Skill'}
+                              </h4>
+                              {isVerified ? (
+                                hasGap ? (
+                                  <Badge
+                                    variant="default"
+                                    className="bg-orange-500 hover:bg-orange-600"
+                                  >
+                                    <AlertTriangle className="mr-1 h-3 w-3" />
+                                    Gap Found
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="default"
+                                    className="bg-green-500 hover:bg-green-600"
+                                  >
+                                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                                    Verified
+                                  </Badge>
+                                )
+                              ) : (
+                                <Badge variant="secondary">
+                                  <Clock className="mr-1 h-3 w-3" />
+                                  Pending
+                                </Badge>
+                              )}
+                            </div>
+
+                            {/* Show claimed vs verified level if there's a gap */}
+                            {hasGap && verifiedLevel && (
+                              <div className="mt-2 flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Claimed:</span>
+                                <span className="capitalize font-medium">{userSkill.proficiency_level}</span>
+                                <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                                <span className="text-muted-foreground">Verified:</span>
+                                <span className="capitalize font-medium text-orange-600">{verifiedLevel}</span>
+                              </div>
+                            )}
+
+                            {/* Progress bar */}
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground capitalize">
+                                {isVerified ? (verifiedLevel || userSkill.proficiency_level) : userSkill.proficiency_level}
+                              </span>
+                              <Progress
+                                value={
+                                  proficiencyLevels[isVerified && verifiedLevel ? verifiedLevel : userSkill.proficiency_level] || 50
+                                }
+                                className={`h-2 w-24 ${hasGap ? '[&>div]:bg-orange-500' : ''}`}
+                              />
+                            </div>
+
+                            {/* Recommendations */}
+                            {recommendations && recommendations.length > 0 && (
+                              <div className="mt-3 p-2 bg-background rounded border">
+                                <p className="text-xs font-medium text-muted-foreground mb-1">Recommendations:</p>
+                                <ul className="text-xs text-muted-foreground space-y-1">
+                                  {recommendations.slice(0, 3).map((rec: string, i: number) => (
+                                    <li key={i} className="flex items-start gap-1">
+                                      <span className="text-orange-500">•</span>
+                                      {rec}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">
+                              {metadata?.source || 'manual'}
                             </Badge>
-                          ) : (
-                            <Badge variant="secondary">
-                              <Clock className="mr-1 h-3 w-3" />
-                              Pending
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground capitalize">
-                            {userSkill.proficiency_level}
-                          </span>
-                          <Progress
-                            value={
-                              proficiencyLevels[userSkill.proficiency_level] || 50
-                            }
-                            className="h-2 w-24"
-                          />
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {userSkill.verification_metadata?.source || 'manual'}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

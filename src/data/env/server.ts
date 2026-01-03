@@ -15,6 +15,11 @@ export const serverEnv = createEnv({
     // Optional during development - events will be persisted but not dispatched
     TRIGGER_SECRET_KEY: z.string().min(1).optional(),
     TRIGGER_API_URL: z.string().url().optional(),
+
+    // Hume AI Configuration (Phase 5: Interviewer Agent)
+    // Required for voice interviews with EVI
+    HUME_API_KEY: z.string().min(1).optional(),
+    HUME_SECRET_KEY: z.string().min(1).optional(),
   },
   experimental__runtimeEnv: process.env,
 });

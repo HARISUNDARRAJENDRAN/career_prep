@@ -253,7 +253,7 @@ export default async function RoadmapPage() {
 
                 {/* Action */}
                 <Button
-                  variant={module.status === 'not_started' ? 'outline' : 'ghost'}
+                  variant={module.status === 'available' ? 'outline' : 'ghost'}
                   size="sm"
                   asChild
                 >

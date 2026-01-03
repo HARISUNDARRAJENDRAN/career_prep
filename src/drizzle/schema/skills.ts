@@ -97,6 +97,10 @@ export const userSkills = pgTable(
         transcript_snippet: string;
         evaluator_confidence: number;
       };
+      // Skill gap analysis (from interview analyzer)
+      verified_level?: 'learning' | 'practicing' | 'proficient' | 'expert';
+      gap_identified?: boolean;
+      recommendations?: string[];
     }>(),
 
     // Timestamps
