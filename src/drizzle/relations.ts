@@ -6,6 +6,7 @@ import { skills, userSkills, skillVerifications } from './schema/skills';
 import { roadmaps, roadmapModules } from './schema/roadmaps';
 import { jobApplications, applicationDocuments } from './schema/jobs';
 import { jobListings, marketInsights, applicationFeedback } from './schema/market';
+import { documentEmbeddings } from './schema/vectors';
 
 // User relations
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -17,6 +18,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   roadmaps: many(roadmaps),
   skills: many(userSkills),
   applications: many(jobApplications),
+  embeddings: many(documentEmbeddings),
 }));
 
 // User Profile relations
@@ -122,5 +124,13 @@ export const applicationFeedbackRelations = relations(applicationFeedback, ({ on
   application: one(jobApplications, {
     fields: [applicationFeedback.job_application_id],
     references: [jobApplications.id],
+  }),
+}));
+
+// Document Embeddings relations (for RAG/pgvector)
+export const documentEmbeddingsRelations = relations(documentEmbeddings, ({ one }) => ({
+  user: one(users, {
+    fields: [documentEmbeddings.user_id],
+    references: [users.clerk_id],
   }),
 }));

@@ -1,15 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/drizzle/db';
 import { interviews } from '@/drizzle/schema';
 import { eq, desc } from 'drizzle-orm';
 import { z } from 'zod';
+import { withArcjetProtection } from '@/lib/arcjet';
 
 /**
  * GET /api/interviews
  * List all interviews for the authenticated user
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     const { userId } = await auth();
     if (!userId) {
@@ -40,14 +45,18 @@ const createInterviewSchema = z.object({
   scheduled_at: z.string().datetime().optional(),
 });
 
-export async function POST(req: Request) {
+export async function POST(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json();
+    const body = await request.json();
     const validationResult = createInterviewSchema.safeParse(body);
 
     if (!validationResult.success) {

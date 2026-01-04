@@ -4,6 +4,7 @@ import { db } from '@/drizzle/db';
 import { users, userProfiles } from '@/drizzle/schema';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { withArcjetProtection } from '@/lib/arcjet';
 
 // Schema for PATCH request validation
 const updateProfileSchema = z.object({
@@ -38,7 +39,11 @@ const updateProfileSchema = z.object({
  * GET /api/users/profile
  * Fetch current user's profile with related data
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     const { userId } = await auth();
 
@@ -92,6 +97,10 @@ export async function GET() {
  * Update user's profile fields
  */
 export async function PATCH(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     const { userId } = await auth();
 

@@ -21,8 +21,12 @@ import {
   type UserSkillProfile,
   type NormalizedJob,
 } from '@/services/job-scraper';
+import { withArcjetProtection } from '@/lib/arcjet';
 
 export async function GET(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
   const searchParams = request.nextUrl.searchParams;
   const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
   const offset = parseInt(searchParams.get('offset') || '0');

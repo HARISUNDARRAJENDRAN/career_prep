@@ -25,8 +25,7 @@ export * from './schema/agent-events';
 export * from './schema/notifications';
 
 // Vector Embeddings Domain (RAG/pgvector)
-// NOTE: Uncomment after enabling pgvector: CREATE EXTENSION IF NOT EXISTS vector;
-// export * from './schema/vectors';
+export * from './schema/vectors';
 
 // Relations (for Drizzle Relational Queries)
 export * from './relations';

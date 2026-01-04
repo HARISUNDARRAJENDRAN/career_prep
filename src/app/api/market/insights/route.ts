@@ -4,12 +4,17 @@
  * GET /api/market/insights - Fetch latest market insights from Sentinel Agent
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/drizzle/db';
 import { marketInsights, jobListings } from '@/drizzle/schema';
 import { desc, eq, sql, gt } from 'drizzle-orm';
+import { withArcjetProtection } from '@/lib/arcjet';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     // Get the latest market summary
     const latestInsight = await db.query.marketInsights.findFirst({

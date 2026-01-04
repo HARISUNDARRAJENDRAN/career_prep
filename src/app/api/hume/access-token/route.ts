@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { fetchAccessToken } from 'hume';
+import { withArcjetProtection } from '@/lib/arcjet';
 
 /**
  * Generate a temporary Hume access token for client-side use.
@@ -8,7 +9,11 @@ import { fetchAccessToken } from 'hume';
  *
  * This endpoint requires authentication to prevent unauthorized access.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Apply Arcjet protection (rate limiting, bot detection, shield)
+  const arcjetResponse = await withArcjetProtection(request);
+  if (arcjetResponse) return arcjetResponse;
+
   try {
     // Ensure user is authenticated
     const { userId } = await auth();
