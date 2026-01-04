@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/drizzle/db';
-import { roadmaps, roadmapModules } from '@/drizzle/schema';
-import { eq, asc } from 'drizzle-orm';
+import { roadmaps, roadmapModules, userSkills, skillVerifications } from '@/drizzle/schema';
+import { eq, asc, desc } from 'drizzle-orm';
 import {
   Card,
   CardContent,
@@ -21,6 +21,14 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import Link from 'next/link';
+import {
+  SkillGapCards,
+  SkillProgressTimeline,
+  SkillModuleMapping,
+  RoadmapTabs,
+  type SkillGapCardData,
+  type VerificationEvent,
+} from '@/components/roadmap';
 
 export default async function RoadmapPage() {
   const { userId } = await auth();
@@ -35,9 +43,91 @@ export default async function RoadmapPage() {
     with: {
       modules: {
         orderBy: [asc(roadmapModules.order_index)],
+        with: {
+          skill: true,
+        },
       },
     },
   });
+
+  // Fetch user's skills with verification data
+  const userSkillsData = await db.query.userSkills.findMany({
+    where: eq(userSkills.user_id, userId),
+    with: {
+      skill: true,
+      verifications: {
+        orderBy: [desc(skillVerifications.verified_at)],
+      },
+    },
+  });
+
+  // Transform skills data for visualization
+  const skillGapData: SkillGapCardData[] = userSkillsData.map((us) => {
+    // Find linked module for this skill
+    const linkedModule = userRoadmap?.modules.find((m) => m.skill_id === us.skill_id);
+
+    return {
+      id: us.id,
+      skillId: us.skill_id,
+      name: us.skill?.name || 'Unknown Skill',
+      category: us.skill?.category || null,
+      claimedLevel: us.proficiency_level,
+      verifiedLevel: us.verification_metadata?.verified_level || null,
+      gapIdentified: us.verification_metadata?.gap_identified || false,
+      isVerified: us.verification_metadata?.is_verified || false,
+      demandScore: us.skill?.demand_score ? parseFloat(us.skill.demand_score) : null,
+      // Verification proof from latest interview
+      latestProof: us.verification_metadata?.latest_proof
+        ? {
+            interviewId: us.verification_metadata.latest_proof.interview_id,
+            timestamp: us.verification_metadata.latest_proof.timestamp,
+            transcriptSnippet: us.verification_metadata.latest_proof.transcript_snippet || '',
+            evaluatorConfidence: us.verification_metadata.latest_proof.evaluator_confidence || 0,
+          }
+        : undefined,
+      // AI-generated recommendations
+      recommendations: us.verification_metadata?.recommendations || undefined,
+      // Note: improvementHistory would need schema updates to track level changes over time
+      improvementHistory: undefined,
+      // Linked learning module
+      linkedModule: linkedModule
+        ? {
+            id: linkedModule.id,
+            title: linkedModule.title,
+            description: linkedModule.description,
+            status: linkedModule.status as 'locked' | 'available' | 'in_progress' | 'completed',
+            estimatedHours: linkedModule.estimated_hours,
+            resources: linkedModule.content?.resources || undefined,
+          }
+        : undefined,
+    };
+  });
+
+  // Get all verifications for timeline
+  const allVerifications: VerificationEvent[] = userSkillsData.flatMap((us) =>
+    us.verifications.map((v) => ({
+      id: v.id,
+      skillName: us.skill?.name || 'Unknown Skill',
+      verifiedAt: v.verified_at,
+      confidenceScore: v.raw_data?.confidence_score || 0,
+      verificationType: v.verification_type,
+      summary: v.summary,
+    }))
+  );
+
+  // Filter for gap skills only
+  const gapSkills = skillGapData.filter((s) => s.gapIdentified);
+
+  // Transform modules for mapping component
+  const moduleData = userRoadmap?.modules.map((m) => ({
+    id: m.id,
+    title: m.title,
+    description: m.description,
+    status: m.status as 'locked' | 'available' | 'in_progress' | 'completed',
+    skillId: m.skill_id,
+    estimatedHours: m.estimated_hours,
+    isMilestone: m.is_milestone || false,
+  })) || [];
 
   // If no roadmap exists, show the "coming soon" state
   if (!userRoadmap) {
@@ -188,84 +278,100 @@ export default async function RoadmapPage() {
         </CardContent>
       </Card>
 
-      {/* Learning Modules */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold">Learning Path</h2>
-        <div className="space-y-3">
-          {userRoadmap.modules.map((module, index) => (
-            <Card
-              key={module.id}
-              className={
-                module.status === 'completed'
-                  ? 'border-green-500/50 bg-green-500/5'
-                  : module.status === 'in_progress'
-                    ? 'border-primary/50 bg-primary/5'
-                    : ''
-              }
-            >
-              <CardContent className="flex items-center gap-4 p-4">
-                {/* Module Number / Status */}
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                    module.status === 'completed'
-                      ? 'bg-green-500 text-white'
-                      : module.status === 'in_progress'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted text-muted-foreground'
-                  }`}
-                >
-                  {module.status === 'completed' ? (
-                    <CheckCircle2 className="h-5 w-5" />
-                  ) : (
-                    <span className="text-sm font-medium">{index + 1}</span>
-                  )}
-                </div>
-
-                {/* Module Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-medium truncate">{module.title}</h3>
-                    {module.is_milestone && (
-                      <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
+      {/* Tabbed Content */}
+      <RoadmapTabs
+        hasSkillData={skillGapData.length > 0}
+        learningPathContent={
+          <div className="space-y-3">
+            {userRoadmap.modules.map((module, index) => (
+              <Card
+                key={module.id}
+                className={
+                  module.status === 'completed'
+                    ? 'border-green-500/50 bg-green-500/5'
+                    : module.status === 'in_progress'
+                      ? 'border-primary/50 bg-primary/5'
+                      : ''
+                }
+              >
+                <CardContent className="flex items-center gap-4 p-4">
+                  {/* Module Number / Status */}
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+                      module.status === 'completed'
+                        ? 'bg-green-500 text-white'
+                        : module.status === 'in_progress'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {module.status === 'completed' ? (
+                      <CheckCircle2 className="h-5 w-5" />
+                    ) : (
+                      <span className="text-sm font-medium">{index + 1}</span>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">
-                    {module.description}
-                  </p>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {module.estimated_hours}h
-                    </span>
-                    <span
-                      className={`capitalize ${
-                        module.status === 'completed'
-                          ? 'text-green-600'
-                          : module.status === 'in_progress'
-                            ? 'text-primary'
-                            : ''
-                      }`}
-                    >
-                      {module.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                </div>
 
-                {/* Action */}
-                <Button
-                  variant={module.status === 'available' ? 'outline' : 'ghost'}
-                  size="sm"
-                  asChild
-                >
-                  <Link href={`/roadmap/${module.id}`}>
-                    <ChevronRight className="h-4 w-4" />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
+                  {/* Module Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-medium truncate">{module.title}</h3>
+                      {module.is_milestone && (
+                        <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground truncate">
+                      {module.description}
+                    </p>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {module.estimated_hours}h
+                      </span>
+                      <span
+                        className={`capitalize ${
+                          module.status === 'completed'
+                            ? 'text-green-600'
+                            : module.status === 'in_progress'
+                              ? 'text-primary'
+                              : ''
+                        }`}
+                      >
+                        {module.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action */}
+                  <Button
+                    variant={module.status === 'available' ? 'outline' : 'ghost'}
+                    size="sm"
+                    asChild
+                  >
+                    <Link href={`/roadmap/${module.id}`}>
+                      <ChevronRight className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        }
+        skillAnalysisContent={
+          <>
+            {/* Skill Gap Cards */}
+            <SkillGapCards skills={skillGapData} />
+
+            {/* Skill Progress Timeline */}
+            <SkillProgressTimeline verifications={allVerifications} />
+
+            {/* Skill-Module Mapping */}
+            {(gapSkills.length > 0 || skillGapData.some(s => s.isVerified)) && (
+              <SkillModuleMapping gapSkills={gapSkills} modules={moduleData} />
+            )}
+          </>
+        }
+      />
     </div>
   );
 }
