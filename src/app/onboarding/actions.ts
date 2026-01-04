@@ -20,6 +20,7 @@ import {
 import crypto from 'crypto';
 import { normalizeSkills, addSkillToCatalog } from '@/lib/skills-normalizer';
 import { publishAgentEvent } from '@/lib/agents/message-bus';
+import { embedAndStoreResume } from '@/lib/embeddings';
 
 type ActionResult = {
   success: boolean;
@@ -650,6 +651,31 @@ export async function confirmResumeSkills(data: {
         updated_at: new Date(),
       })
       .where(eq(users.clerk_id, userId));
+
+    // Generate and store resume embeddings for RAG (Phase 3.6)
+    // This runs in the background - we don't block the UI for this
+    const userProfile = await db.query.userProfiles.findFirst({
+      where: eq(userProfiles.user_id, userId),
+    });
+
+    if (userProfile?.resume_text) {
+      try {
+        const { chunksStored } = await embedAndStoreResume(userId, userProfile.resume_text);
+        console.log(`[Embeddings] Stored ${chunksStored} resume chunks for user ${userId}`);
+
+        // Update profile to mark resume as embedded
+        await db
+          .update(userProfiles)
+          .set({
+            resume_is_embedded: true,
+            resume_embedded_at: new Date(),
+          })
+          .where(eq(userProfiles.user_id, userId));
+      } catch (embedError) {
+        // Log but don't fail - embedding can be retried later
+        console.error('[Embeddings] Failed to embed resume:', embedError);
+      }
+    }
 
     return { success: true };
   } catch (error) {

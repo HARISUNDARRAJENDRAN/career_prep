@@ -6,6 +6,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks(.*)',
+  '/api/test(.*)', // Test endpoints for development
 ]);
 
 // Lightweight middleware - only handles authentication

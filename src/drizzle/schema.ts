@@ -21,6 +21,13 @@ export * from './schema/market';
 // Agent Orchestration Domain (Message Bus)
 export * from './schema/agent-events';
 
+// Notifications Domain
+export * from './schema/notifications';
+
+// Vector Embeddings Domain (RAG/pgvector)
+// NOTE: Uncomment after enabling pgvector: CREATE EXTENSION IF NOT EXISTS vector;
+// export * from './schema/vectors';
+
 // Relations (for Drizzle Relational Queries)
 export * from './relations';
 

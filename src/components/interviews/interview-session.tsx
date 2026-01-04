@@ -471,26 +471,57 @@ Remember to:
 `.trim();
     } else {
       // Reality Check format - Assess all skills
-      const skillsList = candidateContext.skills
-        .map(s => `- ${s.name}: Claimed Level = ${s.claimedLevel}${s.isVerified ? ' (verified)' : ''}`)
+      // Group skills by category/type for better organization
+      const unverifiedSkills = candidateContext.skills.filter(s => !s.isVerified);
+      const totalSkillCount = candidateContext.skills.length;
+
+      // Create a prioritized list - skills the user claims higher proficiency in should be assessed first
+      const priorityOrder = ['expert', 'proficient', 'practicing', 'learning', 'beginner'];
+      const sortedSkills = [...candidateContext.skills].sort((a, b) => {
+        return priorityOrder.indexOf(a.claimedLevel) - priorityOrder.indexOf(b.claimedLevel);
+      });
+
+      const skillsList = sortedSkills
+        .map((s, i) => `${i + 1}. ${s.name}: Claimed Level = ${s.claimedLevel}${s.isVerified ? ' (already verified)' : ''}`)
         .join('\n');
+
+      // Calculate recommended coverage
+      const minSkillsToVerify = Math.min(totalSkillCount, Math.max(10, Math.ceil(totalSkillCount * 0.6)));
 
       return `
 CANDIDATE PROFILE:
 - Name: ${candidateContext.name}
 - Target Roles: ${candidateContext.targetRoles.length > 0 ? candidateContext.targetRoles.join(', ') : 'Not specified'}
 
-CLAIMED SKILLS TO ASSESS:
+TOTAL SKILLS TO ASSESS: ${totalSkillCount} skills
+MINIMUM SKILLS TO VERIFY: ${minSkillsToVerify} skills (aim for comprehensive coverage)
+
+SKILLS LIST (ordered by claimed proficiency - verify higher claims first):
 ${skillsList || 'No skills listed - ask about their experience and interests'}
 
-INTERVIEW TYPE: Reality Check (Initial Benchmark) - 30 MINUTES
+INTERVIEW TYPE: Reality Check (Initial Benchmark) - 30-60 MINUTES
 
-Remember to:
+CRITICAL INSTRUCTIONS FOR COMPREHENSIVE COVERAGE:
 1. Address the candidate by name
-2. Cover at least 4-5 different skills from the list above
-3. Spend no more than 3 questions per skill before moving on
-4. Establish baseline levels for all claimed skills
-5. Be thorough but keep pace - 30 minutes total
+2. You MUST verify at least ${minSkillsToVerify} different skills from the list above
+3. Spend 1-2 questions per skill maximum, then move to the next skill
+4. For each skill, ask ONE focused technical question to gauge understanding
+5. Use quick verification techniques:
+   - "Explain [concept] in one sentence"
+   - "What's the key difference between X and Y?"
+   - "When would you use [technology]?"
+6. Group related skills and assess them together when possible
+7. Keep momentum - don't get stuck on any single skill
+8. If the candidate struggles, note it and move on - do NOT skip the skill entirely
+9. Track which skills you've covered and which remain
+10. Before ending, ensure you've touched on skills from different areas (languages, frameworks, tools, concepts)
+
+PACING GUIDE (for ${totalSkillCount} skills in 30-60 mins):
+- Minutes 0-5: Introduction and warm-up
+- Minutes 5-50: Rapid skill assessment (aim for 1-2 min per skill)
+- Minutes 50-60: Wrap-up and any clarifications
+
+Remember: It's better to briefly assess many skills than to deeply assess only a few.
 `.trim();
     }
   }, [candidateContext, interviewType]);
@@ -505,9 +536,20 @@ Remember to:
       const contextInjection = buildContextInjection();
 
       // Debug: Log the context being sent to Hume
-      console.log('[InterviewSession] Context being sent to Hume:');
-      console.log(contextInjection);
+      console.log('[InterviewSession] Starting interview...');
+      console.log('[InterviewSession] Interview type:', interviewType);
+      console.log('[InterviewSession] Config ID:', configId);
       console.log('[InterviewSession] Number of skills:', candidateContext.skills.length);
+      console.log('[InterviewSession] Access token present:', !!accessToken);
+      console.log('[InterviewSession] Context preview:', contextInjection.substring(0, 500) + '...');
+
+      // Validate inputs before connecting
+      if (!accessToken) {
+        throw new Error('No access token available. Please refresh the page and try again.');
+      }
+      if (!configId) {
+        throw new Error('Hume configuration is missing. Please contact support.');
+      }
 
       // Connect to Hume EVI with auth, configId, and session settings
       // The configId determines which EVI configuration (system prompt, voice) to use
@@ -530,6 +572,7 @@ Remember to:
         },
       });
 
+      console.log('[InterviewSession] Connected to Hume successfully');
       setSessionStartTime(new Date());
 
       // Mark interview as started in DB

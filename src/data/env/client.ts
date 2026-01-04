@@ -19,8 +19,10 @@ export const clientEnv = createEnv({
       .default('/onboarding'),
 
     // Hume AI Configuration (Phase 5: Interviewer Agent)
-    // EVI Configuration ID for voice interviews
+    // EVI Configuration ID for Reality Check interviews (Sebastian)
     NEXT_PUBLIC_HUME_CONFIG_ID: z.string().min(1).optional(),
+    // EVI Configuration ID for Weekly Sprint interviews (Marcus Chen)
+    NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID: z.string().min(1).optional(),
   },
   runtimeEnv: {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
@@ -32,5 +34,6 @@ export const clientEnv = createEnv({
     NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL:
       process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL,
     NEXT_PUBLIC_HUME_CONFIG_ID: process.env.NEXT_PUBLIC_HUME_CONFIG_ID,
+    NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID: process.env.NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID,
   },
 });

@@ -68,6 +68,10 @@ export const jobListings = pgTable(
       benefits?: string[];
       application_url?: string;
       posted_date?: string;
+      job_type?: string;
+      remote_type?: string;
+      salary_min?: number;
+      salary_max?: number;
       source_metadata?: Record<string, unknown>;
     }>(),
 
@@ -101,6 +105,22 @@ export const marketInsights = pgTable('market_insights', {
 
   // Raw intelligence for deep analysis
   raw_data: jsonb('raw_data').$type<{
+    // Market summary data (when skill_name = 'market_summary')
+    skill_demand?: Record<string, number>;
+    trending_skills?: string[];
+    trending_roles?: string[];
+    salary_ranges?: Record<string, { min: number; max: number; avg: number }>;
+    top_companies?: string[];
+    remote_percentage?: number;
+    total_jobs?: number;
+    scrape_date?: string;
+    sources?: Record<string, number>;
+    market_shifts?: Array<{
+      type: string;
+      description: string;
+      impact: string;
+    }>;
+    // Per-skill data
     historical_data?: Array<{
       date: string;
       demand_score: number;
@@ -113,6 +133,41 @@ export const marketInsights = pgTable('market_insights', {
       max: number;
     };
     related_skills?: string[];
+    // GitHub velocity data (when skill_name = 'github_velocity')
+    trending_repos?: Array<{
+      name: string;
+      full_name: string;
+      description: string | null;
+      url: string;
+      stars: number;
+      forks: number;
+      language: string | null;
+      topics: string[];
+    }>;
+    language_trends?: Array<{
+      language: string;
+      repos_count: number;
+      total_stars: number;
+      avg_stars: number;
+      trending_repos: string[];
+    }>;
+    tech_velocity?: Array<{
+      name: string;
+      category: 'language' | 'framework' | 'tool' | 'library';
+      velocity_score: number;
+      github_stars: number;
+      weekly_growth: number;
+      trend: 'rising' | 'stable' | 'declining';
+      related_skills: string[];
+    }>;
+    tech_correlations?: Array<{
+      skill: string;
+      job_demand: number;
+      github_velocity: number;
+      correlation: 'high' | 'medium' | 'low';
+      recommendation: string;
+    }>;
+    scraped_at?: Date | string;
   }>(),
 
   // Timestamps

@@ -20,6 +20,13 @@ export const serverEnv = createEnv({
     // Required for voice interviews with EVI
     HUME_API_KEY: z.string().min(1).optional(),
     HUME_SECRET_KEY: z.string().min(1).optional(),
+
+    // Job Board APIs (Phase 6: Sentinel Agent - Market Intelligence)
+    // Jooble API - Get your key at: https://jooble.org/api/about
+    JOOBLE_API_KEY: z.string().min(1).optional(),
+    // Adzuna API - Register at: https://developer.adzuna.com/
+    ADZUNA_APP_ID: z.string().min(1).optional(),
+    ADZUNA_APP_KEY: z.string().min(1).optional(),
   },
   experimental__runtimeEnv: process.env,
 });

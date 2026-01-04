@@ -34,11 +34,25 @@ export default async function InterviewPage({ params }: InterviewPageProps) {
   }
 
   // Check Hume configuration
-  // We support two different configs for different interview types
+  // Different configs for different interview types:
+  // - Reality Check uses Sebastian (NEXT_PUBLIC_HUME_CONFIG_ID)
+  // - Weekly Sprint uses Marcus Chen (NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID)
   const realityCheckConfigId = process.env.NEXT_PUBLIC_HUME_CONFIG_ID;
-  const weeklySprintConfigId = process.env.NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID || realityCheckConfigId;
+  const weeklySprintConfigId = process.env.NEXT_PUBLIC_HUME_WEEKLY_SPRINT_CONFIG_ID;
 
-  const configId = interview.type === 'weekly_sprint' ? weeklySprintConfigId : realityCheckConfigId;
+  // Select the appropriate config based on interview type
+  const configId = interview.type === 'weekly_sprint'
+    ? weeklySprintConfigId
+    : realityCheckConfigId;
+
+  console.log('[Interview] Config check:', {
+    interviewType: interview.type,
+    hasApiKey: !!serverEnv.HUME_API_KEY,
+    hasSecretKey: !!serverEnv.HUME_SECRET_KEY,
+    realityCheckConfigId: realityCheckConfigId ? 'set' : 'missing',
+    weeklySprintConfigId: weeklySprintConfigId ? 'set' : 'missing',
+    selectedConfigId: configId ? 'set' : 'missing',
+  });
 
   if (!serverEnv.HUME_API_KEY || !serverEnv.HUME_SECRET_KEY || !configId) {
     console.error('[Interview] Missing Hume configuration:', {

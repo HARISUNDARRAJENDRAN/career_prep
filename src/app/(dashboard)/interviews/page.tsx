@@ -145,12 +145,15 @@ export default async function InterviewsPage() {
                 <span>Voice-to-voice with AI interviewer</span>
               </div>
               {completedRealityCheck ? (
-                <Button className="w-full" size="lg" variant="outline" asChild>
-                  <Link href="/interviews/new?type=reality_check">
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Retake Reality Check
-                  </Link>
-                </Button>
+                <div className="space-y-2">
+                  <Button className="w-full" size="lg" variant="outline" disabled>
+                    <CheckCircle2 className="mr-2 h-4 w-4 text-green-500" />
+                    Reality Check Completed
+                  </Button>
+                  <p className="text-xs text-center text-muted-foreground">
+                    The Reality Check is a one-time benchmark. Use Weekly Sprints to continue skill verification.
+                  </p>
+                </div>
               ) : isHumeConfigured ? (
                 <Button className="w-full" size="lg" asChild>
                   <Link href="/interviews/new?type=reality_check">

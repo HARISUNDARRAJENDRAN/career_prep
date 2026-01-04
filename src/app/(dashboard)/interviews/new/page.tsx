@@ -29,6 +29,23 @@ export default async function NewInterviewPage({
     redirect('/interviews?error=hume_not_configured');
   }
 
+  // Reality Check is ONE-TIME ONLY - check if already completed
+  if (interviewType === 'reality_check') {
+    const existingRealityCheck = await db.query.interviews.findFirst({
+      where: (interviews, { and, eq }) =>
+        and(
+          eq(interviews.user_id, userId),
+          eq(interviews.type, 'reality_check'),
+          eq(interviews.status, 'completed')
+        ),
+    });
+
+    if (existingRealityCheck) {
+      // Reality Check already completed - redirect to summary of the completed one
+      redirect(`/interviews/${existingRealityCheck.id}/summary?info=already_completed`);
+    }
+  }
+
   // For weekly sprint, check if reality check is completed
   if (interviewType === 'weekly_sprint') {
     const completedRealityCheck = await db.query.interviews.findFirst({

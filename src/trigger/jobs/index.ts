@@ -22,7 +22,7 @@ export { roadmapRepather } from './roadmap-repather';
 export { skillStatusUpdater, marketRepathCheck } from './skill-updater';
 
 // Sentinel Agent Jobs
-export { marketScraper, marketCleanup } from './market-scraper';
+export { marketScraper, marketCleanup, dailyMarketScraper } from './market-scraper';
 
 // Action Agent Jobs
 export { autoApplier, executeApply } from './auto-applier';
