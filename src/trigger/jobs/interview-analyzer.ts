@@ -72,8 +72,9 @@ interface SkillAssessmentFromAgent {
 
 export const interviewAnalyzer = task({
   id: 'interview.analyze',
+  maxDuration: 300, // 5 minutes max
   retry: {
-    maxAttempts: 3,
+    maxAttempts: 2, // Reduced retries since each attempt is expensive
     factor: 2,
     minTimeoutInMs: 1000,
     maxTimeoutInMs: 30000,
@@ -117,14 +118,20 @@ export const interviewAnalyzer = task({
         throw new Error('Interview transcript not found');
       }
 
-      // Format transcript for the agent
-      const rawTranscript = interview.raw_data.transcript as Array<{
-        speaker: 'user' | 'agent';
-        text: string;
-        timestamp: string;
+      // Format transcript for the agent - validate structure first
+      const rawTranscript = interview.raw_data.transcript;
+      if (!Array.isArray(rawTranscript)) {
+        throw new Error('Interview transcript is not in expected array format');
+      }
+
+      const typedTranscript = rawTranscript as Array<{
+        speaker?: 'user' | 'agent';
+        text?: string;
+        timestamp?: string;
       }>;
-      
-      const formattedTranscript = rawTranscript
+
+      const formattedTranscript = typedTranscript
+        .filter(t => t && typeof t.text === 'string')
         .map((t) => `${t.speaker === 'user' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
         .join('\n\n');
 
@@ -297,11 +304,18 @@ export const interviewAnalyzer = task({
       // =====================================================================
       // Step 6: Update interview with analysis results
       // =====================================================================
+      // Safely access detailed_feedback with fallbacks
+      const detailedFeedback = agentAnalysis.detailed_feedback || {};
+      const communicationScore = detailedFeedback.communication?.score ?? 50;
+      const technicalScore = detailedFeedback.technical?.score ?? 50;
+      const problemSolvingScore = detailedFeedback.problem_solving?.score ?? 50;
+      const culturalFitScore = detailedFeedback.cultural_fit?.score ?? 50;
+
       const overallScore = (
-        agentAnalysis.detailed_feedback.communication.score +
-        agentAnalysis.detailed_feedback.technical.score +
-        agentAnalysis.detailed_feedback.problem_solving.score +
-        agentAnalysis.detailed_feedback.cultural_fit.score
+        communicationScore +
+        technicalScore +
+        problemSolvingScore +
+        culturalFitScore
       ) / 4;
 
       // Map agent output to expected schema format
@@ -318,12 +332,12 @@ export const interviewAnalyzer = task({
         overall_notes: [
           `Analysis by Autonomous Agent (${analysisResult.iterations} iterations, ${(analysisResult.confidence * 100).toFixed(1)}% confidence)`,
           `Overall Score: ${agentAnalysis.overall_score}/100`,
-          `Strengths: ${agentAnalysis.strengths.map(s => s.description).join('; ')}`,
-          `Areas for Improvement: ${agentAnalysis.improvements.map(i => i.description).join('; ')}`,
+          `Strengths: ${(agentAnalysis.strengths || []).map(s => s.description).join('; ')}`,
+          `Areas for Improvement: ${(agentAnalysis.improvements || []).map(i => i.description).join('; ')}`,
         ].join('\n'),
-        career_alignment_score: agentAnalysis.detailed_feedback.cultural_fit.score,
-        self_awareness_score: agentAnalysis.detailed_feedback.problem_solving.score,
-        communication_score: agentAnalysis.detailed_feedback.communication.score,
+        career_alignment_score: culturalFitScore,
+        self_awareness_score: problemSolvingScore,
+        communication_score: communicationScore,
       };
 
       await db

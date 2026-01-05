@@ -130,48 +130,62 @@ export class PlanGenerator {
     const systemPrompt = this.buildSystemPrompt(availableTools);
     const userPrompt = this.buildUserPrompt(goal, context);
 
-    const response = await this.openai.chat.completions.create({
-      model: this.config.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.3,
-    });
+    // Add timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response from AI');
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+      }, { signal: controller.signal });
+
+      clearTimeout(timeoutId);
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('Empty response from AI');
+      }
+
+      const parsed = JSON.parse(content);
+      const validated = PlanResponseSchema.parse(parsed);
+
+      // Convert to Plan format
+      const plan: Plan = {
+        id: crypto.randomUUID(),
+        goal_id: goal.id,
+        steps: validated.steps.map((step, index) => ({
+          step_id: `step-${index + 1}`,
+          action: step.action,
+          tool_id: step.tool_id,
+          tool_input: step.tool_input,
+          expected_output: step.expected_output,
+          fallback_tool_id: step.fallback_tool_id ?? undefined, // Convert null to undefined
+        })),
+        estimated_duration_ms: validated.estimated_duration_ms,
+        confidence_threshold: this.config.default_confidence_threshold,
+        max_iterations: this.config.default_max_iterations,
+        created_at: new Date(),
+        metadata: {
+          reasoning: validated.reasoning,
+          tools_considered: availableTools.map((t) => t.id),
+          risk_assessment: validated.risk_assessment ?? undefined, // Convert null to undefined
+        },
+      };
+
+      return plan;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Plan generation timed out after 60 seconds');
+      }
+      throw error;
     }
-
-    const parsed = JSON.parse(content);
-    const validated = PlanResponseSchema.parse(parsed);
-
-    // Convert to Plan format
-    const plan: Plan = {
-      id: crypto.randomUUID(),
-      goal_id: goal.id,
-      steps: validated.steps.map((step, index) => ({
-        step_id: `step-${index + 1}`,
-        action: step.action,
-        tool_id: step.tool_id,
-        tool_input: step.tool_input,
-        expected_output: step.expected_output,
-        fallback_tool_id: step.fallback_tool_id ?? undefined, // Convert null to undefined
-      })),
-      estimated_duration_ms: validated.estimated_duration_ms,
-      confidence_threshold: this.config.default_confidence_threshold,
-      max_iterations: this.config.default_max_iterations,
-      created_at: new Date(),
-      metadata: {
-        reasoning: validated.reasoning,
-        tools_considered: availableTools.map((t) => t.id),
-        risk_assessment: validated.risk_assessment ?? undefined, // Convert null to undefined
-      },
-    };
-
-    return plan;
   }
 
   /**

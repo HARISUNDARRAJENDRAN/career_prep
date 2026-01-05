@@ -381,3 +381,473 @@ export async function getUserEvents(userId: string, limit = 50) {
     limit,
   });
 }
+
+// ============================================================================
+// Enhanced Inter-Agent Communication (Phase 5)
+// ============================================================================
+
+/**
+ * Message Topics for pub/sub communication
+ */
+export const MessageTopics = {
+  // Interview events
+  INTERVIEW_STARTED: 'interview_started',
+  INTERVIEW_COMPLETED: 'interview_completed',
+  INTERVIEW_FEEDBACK_READY: 'interview_feedback_ready',
+
+  // Job/Market events
+  JOB_MATCH_FOUND: 'job_match_found',
+  MARKET_TRENDS_UPDATED: 'market_trends_updated',
+  SKILLS_EXTRACTED: 'skills_extracted',
+
+  // Roadmap events
+  ROADMAP_CREATED: 'roadmap_created',
+  ROADMAP_UPDATED: 'roadmap_updated',
+  PROGRESS_MILESTONE: 'progress_milestone',
+
+  // Application events
+  APPLICATION_SUBMITTED: 'application_submitted',
+  APPLICATION_STATUS_CHANGED: 'application_status_changed',
+
+  // System events
+  AGENT_STATE_CHANGED: 'agent_state_changed',
+  CONFLICT_DETECTED: 'conflict_detected',
+  CONFLICT_RESOLVED: 'conflict_resolved',
+  WORKFLOW_STARTED: 'workflow_started',
+  WORKFLOW_COMPLETED: 'workflow_completed',
+
+  // Onboarding
+  ONBOARDING_COMPLETED: 'onboarding_completed',
+} as const;
+
+export type MessageTopic = keyof typeof MessageTopics;
+
+/**
+ * Typed payloads for each message topic
+ */
+export interface MessagePayloads {
+  interview_started: {
+    session_id: string;
+    user_id: string;
+    interview_type: string;
+  };
+  interview_completed: {
+    session_id: string;
+    user_id: string;
+    duration_ms: number;
+    overall_score: number;
+  };
+  interview_feedback_ready: {
+    session_id: string;
+    user_id: string;
+    feedback_id: string;
+  };
+  job_match_found: {
+    user_id: string;
+    job_id: string;
+    match_score: number;
+    matching_skills: string[];
+    missing_skills: string[];
+  };
+  market_trends_updated: {
+    timestamp: string;
+    trends: Array<{ skill: string; demand_change: number }>;
+  };
+  skills_extracted: {
+    job_id: string;
+    skills: string[];
+    source: string;
+  };
+  roadmap_created: {
+    user_id: string;
+    roadmap_id: string;
+    target_role: string;
+    modules_count: number;
+  };
+  roadmap_updated: {
+    user_id: string;
+    roadmap_id: string;
+    reason: string;
+  };
+  progress_milestone: {
+    user_id: string;
+    roadmap_id: string;
+    milestone: string;
+    progress_percentage: number;
+  };
+  application_submitted: {
+    user_id: string;
+    application_id: string;
+    job_id: string;
+    company: string;
+    status: string;
+  };
+  application_status_changed: {
+    application_id: string;
+    old_status: string;
+    new_status: string;
+  };
+  agent_state_changed: {
+    agent_id: string;
+    agent_type: string;
+    old_state: string;
+    new_state: string;
+  };
+  conflict_detected: {
+    conflict_id: string;
+    conflict_type: string;
+    sources: string[];
+  };
+  conflict_resolved: {
+    conflict_id: string;
+    conflict_type: string;
+    strategy: string;
+    result: unknown;
+  };
+  workflow_started: {
+    workflow_id: string;
+    execution_id: string;
+    trigger_data: unknown;
+  };
+  workflow_completed: {
+    workflow_id: string;
+    execution_id: string;
+    status: string;
+    duration_ms: number;
+  };
+  onboarding_completed: {
+    user_id: string;
+    target_roles: string[];
+    skills_count: number;
+  };
+}
+
+/**
+ * Subscription handler type
+ */
+type SubscriptionHandler<T> = (payload: T) => void | Promise<void>;
+
+/**
+ * In-memory pub/sub message bus for real-time agent communication
+ * This supplements the database-persisted events with fast local messaging
+ */
+class InMemoryMessageBus {
+  private subscriptions: Map<string, Set<SubscriptionHandler<unknown>>> = new Map();
+  private messageHistory: Map<string, Array<{ payload: unknown; timestamp: Date }>> = new Map();
+  private readonly historyLimit = 100;
+
+  /**
+   * Subscribe to a topic
+   */
+  subscribe<K extends keyof MessagePayloads>(
+    topic: K,
+    handler: SubscriptionHandler<MessagePayloads[K]>
+  ): () => void {
+    // Topic is already in snake_case format (keyof MessagePayloads)
+    const topicKey = topic as string;
+    
+    if (!this.subscriptions.has(topicKey)) {
+      this.subscriptions.set(topicKey, new Set());
+    }
+
+    this.subscriptions.get(topicKey)!.add(handler as SubscriptionHandler<unknown>);
+    console.log(`[MessageBus] Subscribed to ${topicKey}`);
+
+    // Return unsubscribe function
+    return () => {
+      this.subscriptions.get(topicKey)?.delete(handler as SubscriptionHandler<unknown>);
+      console.log(`[MessageBus] Unsubscribed from ${topicKey}`);
+    };
+  }
+
+  /**
+   * Publish a message to a topic
+   */
+  async publish<K extends keyof MessagePayloads>(
+    topic: K,
+    payload: MessagePayloads[K]
+  ): Promise<void> {
+    // Topic is already in snake_case format (keyof MessagePayloads)
+    const topicKey = topic as string;
+    
+    console.log(`[MessageBus] Publishing to ${topicKey}`);
+
+    // Store in history
+    if (!this.messageHistory.has(topicKey)) {
+      this.messageHistory.set(topicKey, []);
+    }
+    const history = this.messageHistory.get(topicKey)!;
+    history.push({ payload, timestamp: new Date() });
+    
+    // Trim history
+    if (history.length > this.historyLimit) {
+      history.shift();
+    }
+
+    // Notify subscribers
+    const handlers = this.subscriptions.get(topicKey);
+    if (!handlers || handlers.size === 0) {
+      console.log(`[MessageBus] No subscribers for ${topicKey}`);
+      return;
+    }
+
+    const promises = Array.from(handlers).map(async (handler) => {
+      try {
+        await handler(payload);
+      } catch (error) {
+        console.error(`[MessageBus] Handler error for ${topicKey}:`, error);
+      }
+    });
+
+    await Promise.all(promises);
+  }
+
+  /**
+   * Get recent messages for a topic
+   */
+  getHistory<K extends keyof MessagePayloads>(
+    topic: K,
+    limit: number = 10
+  ): Array<{ payload: MessagePayloads[K]; timestamp: Date }> {
+    const topicKey = topic as string;
+    const history = this.messageHistory.get(topicKey) || [];
+    return history.slice(-limit) as Array<{ payload: MessagePayloads[K]; timestamp: Date }>;
+  }
+
+  /**
+   * Clear subscriptions (for testing)
+   */
+  clearSubscriptions(): void {
+    this.subscriptions.clear();
+  }
+
+  /**
+   * Get subscription count for a topic
+   */
+  getSubscriberCount(topic: keyof MessagePayloads): number {
+    const topicKey = topic as string;
+    return this.subscriptions.get(topicKey)?.size || 0;
+  }
+}
+
+/**
+ * Singleton message bus instance
+ */
+export const messageBus = new InMemoryMessageBus();
+
+// ============================================================================
+// Agent Data Sharing Protocols
+// ============================================================================
+
+/**
+ * Shared context that agents can read/write
+ */
+interface SharedAgentContext {
+  user_id: string;
+  data: Map<string, unknown>;
+  metadata: Map<string, { agent: string; timestamp: Date }>;
+}
+
+const sharedContexts: Map<string, SharedAgentContext> = new Map();
+
+/**
+ * Get or create shared context for a user
+ */
+export function getSharedContext(userId: string): SharedAgentContext {
+  if (!sharedContexts.has(userId)) {
+    sharedContexts.set(userId, {
+      user_id: userId,
+      data: new Map(),
+      metadata: new Map(),
+    });
+  }
+  return sharedContexts.get(userId)!;
+}
+
+/**
+ * Share data between agents
+ */
+export function shareData(
+  userId: string,
+  key: string,
+  value: unknown,
+  sourceAgent: string
+): void {
+  const context = getSharedContext(userId);
+  context.data.set(key, value);
+  context.metadata.set(key, {
+    agent: sourceAgent,
+    timestamp: new Date(),
+  });
+  console.log(`[SharedContext] ${sourceAgent} shared ${key} for user ${userId}`);
+}
+
+/**
+ * Read shared data
+ */
+export function readSharedData<T>(userId: string, key: string): T | undefined {
+  const context = getSharedContext(userId);
+  return context.data.get(key) as T | undefined;
+}
+
+/**
+ * Read shared data with metadata
+ */
+export function readSharedDataWithMeta<T>(
+  userId: string,
+  key: string
+): { value: T | undefined; agent?: string; timestamp?: Date } {
+  const context = getSharedContext(userId);
+  const value = context.data.get(key) as T | undefined;
+  const meta = context.metadata.get(key);
+  return {
+    value,
+    agent: meta?.agent,
+    timestamp: meta?.timestamp,
+  };
+}
+
+/**
+ * List all shared data keys for a user
+ */
+export function listSharedDataKeys(userId: string): string[] {
+  const context = getSharedContext(userId);
+  return Array.from(context.data.keys());
+}
+
+/**
+ * Clear shared context for a user
+ */
+export function clearSharedContext(userId: string): void {
+  sharedContexts.delete(userId);
+}
+
+// ============================================================================
+// Agent Request/Response Protocol
+// ============================================================================
+
+interface AgentRequest<T = unknown> {
+  id: string;
+  from_agent: string;
+  to_agent: string;
+  action: string;
+  params: T;
+  timeout_ms: number;
+  created_at: Date;
+}
+
+interface AgentResponse<T = unknown> {
+  request_id: string;
+  from_agent: string;
+  success: boolean;
+  data?: T;
+  error?: string;
+  responded_at: Date;
+}
+
+type RequestHandler<P, R> = (params: P) => Promise<R>;
+
+const requestHandlers: Map<string, Map<string, RequestHandler<unknown, unknown>>> = new Map();
+const pendingRequests: Map<string, {
+  resolve: (response: AgentResponse) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}> = new Map();
+
+/**
+ * Register a request handler for an agent
+ */
+export function registerRequestHandler<P, R>(
+  agentId: string,
+  action: string,
+  handler: RequestHandler<P, R>
+): void {
+  if (!requestHandlers.has(agentId)) {
+    requestHandlers.set(agentId, new Map());
+  }
+  requestHandlers.get(agentId)!.set(action, handler as RequestHandler<unknown, unknown>);
+  console.log(`[AgentProtocol] Registered handler: ${agentId}.${action}`);
+}
+
+/**
+ * Send a request to another agent
+ */
+export async function requestFromAgent<P, R>(
+  fromAgent: string,
+  toAgent: string,
+  action: string,
+  params: P,
+  timeoutMs: number = 30000
+): Promise<R> {
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const request: AgentRequest<P> = {
+    id: requestId,
+    from_agent: fromAgent,
+    to_agent: toAgent,
+    action,
+    params,
+    timeout_ms: timeoutMs,
+    created_at: new Date(),
+  };
+
+  console.log(`[AgentProtocol] ${fromAgent} -> ${toAgent}.${action}`);
+
+  // Check if handler exists
+  const agentHandlers = requestHandlers.get(toAgent);
+  const handler = agentHandlers?.get(action);
+
+  if (!handler) {
+    throw new Error(`No handler registered for ${toAgent}.${action}`);
+  }
+
+  // Execute handler with timeout
+  return new Promise<R>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error(`Request ${requestId} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    // Execute handler
+    handler(params)
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result as R);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
+
+/**
+ * Broadcast a request to multiple agents
+ */
+export async function broadcastRequest<P, R>(
+  fromAgent: string,
+  toAgents: string[],
+  action: string,
+  params: P,
+  timeoutMs: number = 30000
+): Promise<Map<string, R | Error>> {
+  const results = new Map<string, R | Error>();
+
+  const promises = toAgents.map(async (toAgent) => {
+    try {
+      const result = await requestFromAgent<P, R>(
+        fromAgent,
+        toAgent,
+        action,
+        params,
+        timeoutMs
+      );
+      results.set(toAgent, result);
+    } catch (error) {
+      results.set(toAgent, error as Error);
+    }
+  });
+
+  await Promise.all(promises);
+  return results;
+}

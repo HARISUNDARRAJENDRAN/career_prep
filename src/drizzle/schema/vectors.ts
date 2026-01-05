@@ -22,7 +22,7 @@ export const documentEmbeddings = pgTable(
     // Source reference
     source_type: varchar('source_type', { length: 50 }).notNull(),
     // Types: 'resume', 'job_listing', 'skill_verification', 'interview_transcript'
-    source_id: varchar('source_id', { length: 36 }).notNull(),
+    source_id: varchar('source_id', { length: 255 }).notNull(),
 
     // User reference (for user-specific content like resumes and verifications)
     user_id: varchar('user_id', { length: 255 }).references(

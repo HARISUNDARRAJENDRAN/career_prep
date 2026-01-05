@@ -10,6 +10,7 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import { toolRegistry, type ToolDefinition, defineTool } from '../../tools/tool-registry';
 import { buildPrompt, INTERVIEWER_PROMPTS } from './interviewer-prompts';
+import { safeJsonParse } from '../../utils/safe-json';
 
 // ============================================================================
 // Input/Output Schemas
@@ -212,7 +213,7 @@ const gpt4AnalyzerTool: ToolDefinition<
     const content = response.choices[0]?.message?.content || '';
 
     return {
-      response: input.response_format === 'json' ? JSON.parse(content) : content,
+      response: input.response_format === 'json' ? safeJsonParse(content, 'GPT-4 analysis') : content,
       tokens_used: response.usage?.total_tokens || 0,
     };
   },
@@ -271,7 +272,7 @@ const skillExtractorTool: ToolDefinition<
     });
 
     const content = response.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(content);
+    const parsed = safeJsonParse<{ skills?: Array<{ type?: string }> }>(content, 'skill extraction');
 
     return {
       skills: parsed.skills || [],
@@ -339,8 +340,15 @@ const feedbackGeneratorTool: ToolDefinition<
     });
 
     const content = response.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(content);
-    
+    const parsed = safeJsonParse<{
+      overall_score?: number;
+      strengths?: unknown[];
+      improvements?: unknown[];
+      detailed_feedback?: unknown;
+      action_items?: unknown[];
+      personalized_tips?: string[];
+    }>(content, 'feedback generation');
+
     return {
       overall_score: parsed.overall_score || 0,
       strengths: parsed.strengths || [],
@@ -409,7 +417,7 @@ const strengthAnalyzerTool: ToolDefinition<
     });
 
     const content = response.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    return safeJsonParse(content, 'strength analysis');
   },
   cost: { tokens: 1500, latency_ms: 4000 },
   requires: ['OPENAI_API_KEY'],
@@ -466,7 +474,7 @@ const improvementAnalyzerTool: ToolDefinition<
     });
 
     const content = response.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    return safeJsonParse(content, 'improvement analysis');
   },
   cost: { tokens: 1500, latency_ms: 4000 },
   requires: ['OPENAI_API_KEY'],
@@ -523,7 +531,7 @@ const actionItemGeneratorTool: ToolDefinition<
     });
 
     const content = response.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    return safeJsonParse(content, 'action item generation');
   },
   cost: { tokens: 800, latency_ms: 2500 },
   requires: ['OPENAI_API_KEY'],

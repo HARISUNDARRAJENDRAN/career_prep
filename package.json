@@ -11,7 +11,11 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test:agents": "powershell -ExecutionPolicy Bypass -File scripts/test-agents.ps1",
+    "test:agents:health": "powershell -ExecutionPolicy Bypass -File scripts/test-agents.ps1 -TestType health",
+    "test:agents:core": "powershell -ExecutionPolicy Bypass -File scripts/test-agents.ps1 -TestType core",
+    "test:agents:full": "powershell -ExecutionPolicy Bypass -File scripts/test-agents.ps1 -TestType full"
   },
   "dependencies": {
     "@arcjet/nest": "^1.0.0-beta.15",

@@ -23,7 +23,13 @@ export type ToolCategory =
   | 'generation' // Content generation
   | 'communication' // Email, notifications
   | 'database' // Data operations
-  | 'external_api'; // Third-party services
+  | 'external_api' // Third-party services
+  | 'data_collection' // Scraping, API fetching
+  | 'data_retrieval' // Fetching from database
+  | 'matching' // Job/skill matching
+  | 'persistence' // Storing data
+  | 'decision' // AI decision making
+  | 'validation'; // Validation checks
 
 /**
  * Tool execution cost estimation
@@ -205,6 +211,13 @@ export class ToolRegistry {
   // =========================================================================
   // Retrieval
   // =========================================================================
+
+  /**
+   * Check if a tool exists by ID
+   */
+  has(toolId: string): boolean {
+    return this.tools.has(toolId);
+  }
 
   /**
    * Get a tool by ID

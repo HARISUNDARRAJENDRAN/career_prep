@@ -342,7 +342,7 @@ export class ToolExecutor {
         .execute(tool.id, input)
         .then((result) => {
           clearTimeout(timeoutId);
-          resolve(result as T);
+          resolve(result.output as T);
         })
         .catch((error) => {
           clearTimeout(timeoutId);

@@ -58,19 +58,7 @@ export default async function InterviewSummaryPage({
     redirect(`/interviews/${id}`);
   }
 
-  // Fetch skill verifications from this interview with related data
-  const verifications = await db.query.skillVerifications.findMany({
-    where: eq(skillVerifications.interview_id, id),
-    with: {
-      userSkill: {
-        with: {
-          skill: true,
-        },
-      },
-    },
-  });
-
-  // Parse transcript and emotion summary from raw_data
+  // If no analysis yet, redirect to processing page
   const rawData = interview.raw_data as {
     transcript?: Array<{
       speaker: string;
@@ -97,10 +85,27 @@ export default async function InterviewSummaryPage({
     interrupted?: boolean;
   } | null;
 
+  // Check if analysis is complete - if not, redirect to processing
+  if (!rawData?.analysis || Object.keys(rawData.analysis).length === 0) {
+    redirect(`/interviews/${id}/processing`);
+  }
+
   const transcript = rawData?.transcript || [];
   const emotionSummary = rawData?.emotion_summary || {};
   const analysis = rawData?.analysis;
   const wasInterrupted = rawData?.interrupted || false;
+
+  // Fetch skill verifications from this interview with related data
+  const verifications = await db.query.skillVerifications.findMany({
+    where: eq(skillVerifications.interview_id, id),
+    with: {
+      userSkill: {
+        with: {
+          skill: true,
+        },
+      },
+    },
+  });
 
   // Calculate stats
   const userMessages = transcript.filter((t) => t.speaker === 'user');
@@ -245,21 +250,21 @@ export default async function InterviewSummaryPage({
               {analysis.communication_score !== undefined && (
                 <div className="text-center p-3 border rounded-lg">
                   <MessageSquare className="h-5 w-5 mx-auto text-blue-500 mb-1" />
-                  <div className="text-2xl font-bold">{analysis.communication_score}/10</div>
+                  <div className="text-2xl font-bold">{Math.round(analysis.communication_score / 10)}/10</div>
                   <p className="text-xs text-muted-foreground">Communication</p>
                 </div>
               )}
               {analysis.self_awareness_score !== undefined && (
                 <div className="text-center p-3 border rounded-lg">
                   <Brain className="h-5 w-5 mx-auto text-purple-500 mb-1" />
-                  <div className="text-2xl font-bold">{analysis.self_awareness_score}/10</div>
+                  <div className="text-2xl font-bold">{Math.round(analysis.self_awareness_score / 10)}/10</div>
                   <p className="text-xs text-muted-foreground">Self-Awareness</p>
                 </div>
               )}
               {analysis.career_alignment_score !== undefined && (
                 <div className="text-center p-3 border rounded-lg">
                   <Target className="h-5 w-5 mx-auto text-green-500 mb-1" />
-                  <div className="text-2xl font-bold">{analysis.career_alignment_score}/10</div>
+                  <div className="text-2xl font-bold">{Math.round(analysis.career_alignment_score / 10)}/10</div>
                   <p className="text-xs text-muted-foreground">Career Alignment</p>
                 </div>
               )}

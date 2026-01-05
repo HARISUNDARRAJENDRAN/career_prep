@@ -149,6 +149,100 @@ export {
   type InterviewerAgentConfig,
 } from './agents';
 
+// Sentinel Agent (Market Intelligence)
+export {
+  SentinelAgent,
+  createSentinelAgent,
+  SENTINEL_PROMPTS,
+  registerSentinelTools,
+  getSentinelToolIds,
+  type SentinelAgentConfig,
+  type SentinelResult,
+} from './agents/sentinel';
+
+// Architect Agent (Roadmap Generation)
+export {
+  ArchitectAgent,
+  createArchitectAgent,
+  generateRoadmap,
+  repathRoadmap,
+  evaluateProgress,
+  ARCHITECT_PROMPTS,
+  registerArchitectTools,
+  getArchitectToolIds,
+  type ArchitectAgentConfig,
+  type ArchitectResult,
+  type RoadmapGenerationContext,
+  type RepathContext,
+  type ProgressEvaluationContext,
+  type RoadmapGenerationOutput,
+  type RepathOutput,
+  type ProgressOutput,
+} from './agents/architect';
+
+// Action Agent (Auto-Applier)
+export {
+  ActionAgent,
+  createApplicationAgent,
+  createBatchApplicationAgent,
+  createFollowUpAgent,
+  createPrioritizationAgent,
+  ACTION_PROMPTS,
+  registerActionTools,
+  getActionToolIds,
+  type ActionAgentConfig,
+  type ActionResult,
+} from './agents/action';
+
+// ============================================================================
+// Workflow Orchestration (Phase 5)
+// ============================================================================
+
+export {
+  // Workflow Orchestrator
+  WorkflowOrchestrator,
+  workflowOrchestrator,
+  INTERVIEW_FEEDBACK_WORKFLOW,
+  DAILY_CAREER_PIPELINE,
+  ONBOARDING_WORKFLOW,
+  WEEKLY_PROGRESS_WORKFLOW,
+  type WorkflowStep as OrchestratorWorkflowStep,
+  type WorkflowDefinition as OrchestratorWorkflowDefinition,
+  type WorkflowExecution,
+  type ParallelGroup,
+  type AgentType,
+  type AgentFactory,
+  type AgentInstance,
+  // Workflow Patterns
+  fanOutFanIn,
+  aggregate,
+  pipeline,
+  scatterGather,
+  saga,
+  AggregationStrategies,
+  fanOutJobMatching,
+  fanOutSkillExtraction,
+  interviewAnalysisPipeline,
+  multiSourceJobScrape,
+  processBatches,
+  type FanOutConfig,
+  type FanOutResult,
+  type AggregationStrategy,
+  type PipelineStage,
+  type SagaStep,
+  type ScatterGatherConfig,
+  // Conflict Resolution
+  ConflictResolver,
+  conflictResolver,
+  type ConflictType,
+  type ConflictItem,
+  type Conflict,
+  type Resolution,
+  type ResolutionStrategy,
+  type ResolutionRule,
+  type ConflictResolverConfig,
+} from './workflows';
+
 // ============================================================================
 // Existing Infrastructure (Message Bus & Events)
 // ============================================================================
@@ -160,8 +254,22 @@ export {
   markEventCompleted,
   markEventFailed,
   incrementRetryCount,
+  // Enhanced Inter-Agent Communication
+  messageBus,
+  MessageTopics,
+  getSharedContext,
+  shareData,
+  readSharedData,
+  readSharedDataWithMeta,
+  listSharedDataKeys,
+  clearSharedContext,
+  registerRequestHandler,
+  requestFromAgent,
+  broadcastRequest,
   type PublishResult,
   type IdempotencyCheckResult,
+  type MessagePayloads,
+  type MessageTopic,
 } from './message-bus';
 
 export {

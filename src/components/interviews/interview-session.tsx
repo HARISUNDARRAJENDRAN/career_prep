@@ -413,7 +413,7 @@ export function InterviewSession({
           console.log('[InterviewSession] Recovered transcript successfully');
           clearStoredTranscript(interviewId);
           setHasRecoverableTranscript(false);
-          router.push(`/interviews/${interviewId}/summary`);
+          router.push(`/interviews/${interviewId}/processing`);
         } else {
           setError('Failed to recover transcript. Please try again.');
         }
@@ -441,7 +441,7 @@ export function InterviewSession({
     if (interviewType === 'weekly_sprint') {
       // Weekly Sprint format - Focus on gaps
       const gapSkillsList = gapSkills.length > 0
-        ? gapSkills.map(s => `- ${s.name}: Claimed ${s.claimedLevel}, Verified ${s.verifiedLevel || 'not yet'} [GAP - FOCUS ON THIS]`).join('\n')
+        ? gapSkills.map((s, i) => `${i + 1}. ${s.name}: Claimed ${s.claimedLevel}, Verified ${s.verifiedLevel || 'not yet'} [GAP]`).join('\n')
         : 'No skill gaps identified - do a quick maintenance check on verified skills.';
 
       const verifiedSkillsList = verifiedSkills.length > 0
@@ -453,21 +453,27 @@ CANDIDATE PROFILE:
 - Name: ${candidateContext.name}
 - Target Roles: ${candidateContext.targetRoles.length > 0 ? candidateContext.targetRoles.join(', ') : 'Not specified'}
 
-SKILLS TO FOCUS ON (GAP SKILLS):
+═══════════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: DO NOT REPEAT TOPICS - TRACK WHAT YOU'VE DISCUSSED ⚠️
+═══════════════════════════════════════════════════════════════════════
+
+GAP SKILLS TO CHECK (go through this list ONCE):
 ${gapSkillsList}
 
-PREVIOUSLY VERIFIED SKILLS (No focus needed):
+ALREADY VERIFIED SKILLS (DO NOT re-assess these):
 ${verifiedSkillsList}
 
-INTERVIEW TYPE: Weekly Sprint (Progress Check) - 15 MINUTES MAX
+INTERVIEW TYPE: Weekly Sprint - 15 MINUTES MAX
 
-Remember to:
-1. Address the candidate by name
-2. Focus ONLY on skills marked with [GAP]
-3. Ask 2-3 quick questions per gap skill
-4. Note improvement or continued struggles
-5. End with encouragement and next week's focus
+RULES:
+1. Address ${candidateContext.name} by name
+2. Cover each gap skill ONCE with 1-2 questions
+3. Mark each skill as "discussed" mentally - NEVER return to it
+4. If candidate says "we talked about that" - apologize and move on
+5. When all gaps are covered, wrap up - don't pad the time
 6. Keep it under 15 minutes!
+
+This is a BRIEF check-in, not a full assessment.
 `.trim();
     } else {
       // Reality Check format - Assess all skills
@@ -494,34 +500,54 @@ CANDIDATE PROFILE:
 - Target Roles: ${candidateContext.targetRoles.length > 0 ? candidateContext.targetRoles.join(', ') : 'Not specified'}
 
 TOTAL SKILLS TO ASSESS: ${totalSkillCount} skills
-MINIMUM SKILLS TO VERIFY: ${minSkillsToVerify} skills (aim for comprehensive coverage)
 
-SKILLS LIST (ordered by claimed proficiency - verify higher claims first):
+═══════════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: CONVERSATION TRACKING - READ THIS CAREFULLY ⚠️
+═══════════════════════════════════════════════════════════════════════
+
+YOU MUST MAINTAIN A MENTAL CHECKLIST AS YOU GO:
+
+SKILLS NOT YET DISCUSSED (start here - go through this list):
 ${skillsList || 'No skills listed - ask about their experience and interests'}
 
-INTERVIEW TYPE: Reality Check (Initial Benchmark) - 30-60 MINUTES
+AS YOU DISCUSS EACH SKILL:
+1. Mentally move it from "NOT YET DISCUSSED" to "ALREADY COVERED"
+2. NEVER return to a skill you've already covered
+3. NEVER rephrase and re-ask about the same skill
+4. If candidate declines to discuss a skill, mark it as SKIPPED and move on
 
-CRITICAL INSTRUCTIONS FOR COMPREHENSIVE COVERAGE:
-1. Address the candidate by name
-2. You MUST verify at least ${minSkillsToVerify} different skills from the list above
-3. Spend 1-2 questions per skill maximum, then move to the next skill
-4. For each skill, ask ONE focused technical question to gauge understanding
-5. Use quick verification techniques:
-   - "Explain [concept] in one sentence"
-   - "What's the key difference between X and Y?"
-   - "When would you use [technology]?"
-6. Group related skills and assess them together when possible
-7. Keep momentum - don't get stuck on any single skill
-8. If the candidate struggles, note it and move on - do NOT skip the skill entirely
-9. Track which skills you've covered and which remain
-10. Before ending, ensure you've touched on skills from different areas (languages, frameworks, tools, concepts)
+IF CANDIDATE SAYS "WE ALREADY TALKED ABOUT THAT":
+- Apologize briefly: "You're right, my apologies"
+- Immediately move to the NEXT uncovered skill
+- Do NOT try to justify or explain
 
-PACING GUIDE (for ${totalSkillCount} skills in 30-60 mins):
-- Minutes 0-5: Introduction and warm-up
-- Minutes 5-50: Rapid skill assessment (aim for 1-2 min per skill)
-- Minutes 50-60: Wrap-up and any clarifications
+WHEN YOU'VE COVERED ALL SKILLS (this is the goal!):
+Instead of repeating topics, do ONE of these:
+1. Ask deeper questions about their STRONGEST demonstrated skill
+2. Explore how they combine multiple skills in projects
+3. Discuss their career vision and learning goals
+4. Ask about challenging problems they've solved
+5. WRAP UP THE INTERVIEW - it's OK to end early if thorough!
 
-Remember: It's better to briefly assess many skills than to deeply assess only a few.
+═══════════════════════════════════════════════════════════════════════
+
+INTERVIEW TYPE: Reality Check (Initial Benchmark) - 30-60 MINUTES (OK to end early)
+
+INTERVIEW APPROACH:
+1. Address ${candidateContext.name} by name
+2. Go through skills ONE BY ONE - ask 1-2 questions max per skill
+3. Mark each skill as "covered" in your mental checklist
+4. Keep momentum - don't linger on any single topic
+5. When all skills are covered, transition to wrap-up or deeper exploration
+6. Quality over quantity - a focused 25-min interview beats a repetitive 60-min one
+
+QUESTION VARIETY (use different formats):
+- "Walk me through how you'd use [skill]..."
+- "What's a common pitfall with [skill]?"
+- "Tell me about a project using [skill]..."
+- "How does [skill] compare to [related skill]?"
+
+Remember: Once a skill is discussed, it's DONE. Move forward, never backward.
 `.trim();
     }
   }, [candidateContext, interviewType]);
@@ -535,13 +561,27 @@ Remember: It's better to briefly assess many skills than to deeply assess only a
       // Build the context injection with user's skills
       const contextInjection = buildContextInjection();
 
-      // Debug: Log the context being sent to Hume
+      // Debug: Log the FULL context being sent to Hume
       console.log('[InterviewSession] Starting interview...');
       console.log('[InterviewSession] Interview type:', interviewType);
       console.log('[InterviewSession] Config ID:', configId);
       console.log('[InterviewSession] Number of skills:', candidateContext.skills.length);
+      console.log('[InterviewSession] Skills list:', candidateContext.skills.map(s => `${s.name} (${s.claimedLevel})`).join(', '));
+      console.log('[InterviewSession] Candidate name:', candidateContext.name);
+      console.log('[InterviewSession] Target roles:', candidateContext.targetRoles);
       console.log('[InterviewSession] Access token present:', !!accessToken);
-      console.log('[InterviewSession] Context preview:', contextInjection.substring(0, 500) + '...');
+
+      if (candidateContext.skills.length === 0) {
+        console.warn('[InterviewSession] ⚠️ WARNING: No skills found! The interview agent will not know what to ask about.');
+        console.warn('[InterviewSession] This could mean:');
+        console.warn('[InterviewSession]   1. Resume was not parsed during onboarding');
+        console.warn('[InterviewSession]   2. Skills were not extracted from resume');
+        console.warn('[InterviewSession]   3. Database query is not finding the skills');
+      }
+
+      console.log('[InterviewSession] ========== FULL CONTEXT INJECTION ==========');
+      console.log(contextInjection);
+      console.log('[InterviewSession] ========== END CONTEXT INJECTION ==========');
 
       // Validate inputs before connecting
       if (!accessToken) {
@@ -557,12 +597,24 @@ Remember: It's better to briefly assess many skills than to deeply assess only a
       // - systemPrompt OVERRIDES the base prompt (loses Sebastian's instructions)
       // - context APPENDS to the conversation (Sebastian sees both his instructions AND the candidate data)
       // verboseTranscription: false makes EVI less sensitive to interruptions (waits longer)
+      //
+      // We also pass 'variables' to fill any {{template}} placeholders in the Hume config's system prompt
       await connect({
         auth: { type: 'accessToken', value: accessToken },
         configId,
         verboseTranscription: false,
         sessionSettings: {
           type: 'session_settings',
+          // Variables to fill {{placeholders}} in the Hume system prompt
+          variables: {
+            userName: candidateContext.name,
+            targetRoles: candidateContext.targetRoles.length > 0
+              ? candidateContext.targetRoles.join(', ')
+              : 'Not specified',
+            skills: candidateContext.skills.length > 0
+              ? candidateContext.skills.map(s => `${s.name} (${s.claimedLevel})`).join(', ')
+              : 'No skills specified',
+          },
           // Use context with type 'persistent' to inject candidate data throughout the session
           // This is appended to the conversation, not overriding Sebastian's base instructions
           context: {
@@ -645,8 +697,8 @@ Remember: It's better to briefly assess many skills than to deeply assess only a
       // Clear localStorage after successful save
       clearStoredTranscript(interviewId);
 
-      // Redirect to summary
-      router.push(`/interviews/${interviewId}/summary`);
+      // Redirect to processing page (agents will analyze and generate results)
+      router.push(`/interviews/${interviewId}/processing`);
     } catch (err) {
       console.error('Failed to end interview:', err);
       setError(err instanceof Error ? err.message : 'Failed to end interview');

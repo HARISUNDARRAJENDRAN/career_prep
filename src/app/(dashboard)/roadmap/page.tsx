@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/drizzle/db';
-import { roadmaps, roadmapModules, userSkills, skillVerifications } from '@/drizzle/schema';
-import { eq, asc, desc } from 'drizzle-orm';
+import { roadmaps, roadmapModules, userSkills, skillVerifications, interviews } from '@/drizzle/schema';
+import { eq, asc, desc, and } from 'drizzle-orm';
 import {
   Card,
   CardContent,
@@ -19,6 +19,7 @@ import {
   Clock,
   Trophy,
   ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -129,6 +130,16 @@ export default async function RoadmapPage() {
     isMilestone: m.is_milestone || false,
   })) || [];
 
+  // Check if user has completed any interviews (for roadmap generation eligibility)
+  const completedInterview = await db.query.interviews.findFirst({
+    where: and(
+      eq(interviews.user_id, userId),
+      eq(interviews.status, 'completed')
+    ),
+  });
+
+  const hasCompletedInterview = !!completedInterview;
+
   // If no roadmap exists, show the "coming soon" state
   if (!userRoadmap) {
     return (
@@ -146,19 +157,36 @@ export default async function RoadmapPage() {
         <Card className="border-dashed">
           <CardHeader className="text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-              <Lock className="h-6 w-6 text-primary" />
+              {hasCompletedInterview ? (
+                <Sparkles className="h-6 w-6 text-primary" />
+              ) : (
+                <Lock className="h-6 w-6 text-primary" />
+              )}
             </div>
-            <CardTitle className="mt-4">Roadmap Unlocks After Interview</CardTitle>
+            <CardTitle className="mt-4">
+              {hasCompletedInterview
+                ? 'Ready to Generate Your Roadmap'
+                : 'Roadmap Unlocks After Interview'}
+            </CardTitle>
             <CardDescription className="max-w-md mx-auto">
-              Complete your Reality Check Interview to unlock your personalized
-              learning roadmap. The Architect Agent will create a customized path
-              based on your verified skills and career goals.
+              {hasCompletedInterview
+                ? 'You\'ve completed your Reality Check Interview! Click below to generate your personalized learning roadmap based on your verified skills and career goals.'
+                : 'Complete your Reality Check Interview to unlock your personalized learning roadmap. The Architect Agent will create a customized path based on your verified skills and career goals.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <Button asChild>
-              <a href="/interviews">Schedule Interview</a>
-            </Button>
+            {hasCompletedInterview ? (
+              <Button asChild>
+                <Link href="/roadmap/generating">
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Generate My Roadmap
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link href="/interviews">Schedule Interview</Link>
+              </Button>
+            )}
           </CardContent>
         </Card>
 

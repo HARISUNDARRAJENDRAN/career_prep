@@ -144,18 +144,45 @@ Patterns learned from past analyses:
 {PAST_PATTERNS}
 
 Create a complete analysis with:
-1. overall_score (0-100)
+1. overall_score (0-100) - BE STRICT. Use the full range:
+   - 90-100: Exceptional performance, ready for senior roles at top companies
+   - 75-89: Strong performance with minor areas to improve
+   - 60-74: Good foundation but needs meaningful work on key areas
+   - 45-59: Average, significant gaps need addressing
+   - 30-44: Below expectations, major improvements needed
+   - 0-29: Needs fundamental skill development
+
 2. strengths (array of {category, description, evidence})
 3. improvements (array of {category, description, suggestion, priority})
-4. detailed_feedback (communication, technical, problem_solving, cultural_fit - each with score and notes)
+4. detailed_feedback - SCORES MUST BE 0-100, be rigorous:
+   - communication: {score: 0-100, notes: string}
+   - technical: {score: 0-100, notes: string}
+   - problem_solving: {score: 0-100, notes: string}
+   - cultural_fit: {score: 0-100, notes: string}
+
+   SCORING GUIDE (apply strictly):
+   - 85-100: Exceptional, demonstrates mastery
+   - 70-84: Proficient, meets professional standards
+   - 55-69: Developing, shows potential but has gaps
+   - 40-54: Needs improvement, below expectations
+   - 0-39: Significant deficiencies
+
 5. action_items (array of {item, timeline, resources?})
 6. personalized_tips (array of strings)
+
+IMPORTANT SCORING RULES:
+- Do NOT default to high scores (70+) without strong evidence
+- A 7-minute interview with limited depth should score lower
+- Short, vague, or surface-level answers = lower scores
+- Hesitation, uncertainty, or inability to elaborate = deduct points
+- Missing key concepts or incorrect explanations = significant deductions
+- Be honest and fair - this helps candidates improve
 
 Ensure the feedback is:
 - Balanced (strengths and areas to improve)
 - Specific (with examples from transcript)
 - Actionable (clear next steps)
-- Encouraging but honest
+- Encouraging but HONEST - sugar-coating doesn't help candidates
 
 Return as valid JSON matching the AnalysisOutput schema.`,
 
