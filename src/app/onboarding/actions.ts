@@ -660,8 +660,8 @@ export async function confirmResumeSkills(data: {
 
     if (userProfile?.resume_text) {
       try {
-        const { chunksStored } = await embedAndStoreResume(userId, userProfile.resume_text);
-        console.log(`[Embeddings] Stored ${chunksStored} resume chunks for user ${userId}`);
+        const { chunkCount } = await embedAndStoreResume(userId, userProfile.resume_text);
+        console.log(`[Embeddings] Stored ${chunkCount} resume chunks for user ${userId}`);
 
         // Update profile to mark resume as embedded
         await db

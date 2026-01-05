@@ -1,36 +1,50 @@
 /**
- * Interview Analyzer Job
+ * Interview Analyzer Job (Autonomous Agent Version)
  *
  * Triggered when: INTERVIEW_COMPLETED event is published
- * Purpose: Analyze interview transcript to verify claimed skills
+ * Purpose: Analyze interview transcript using the Autonomous InterviewerAgent
  *
  * This job is part of the "Truth Loop" - it closes the feedback loop
  * between what users claim and what they demonstrate in interviews.
  *
+ * UPDATED: Now uses the autonomous InterviewerAgent for AI analysis with:
+ * - Iterative refinement (loop until confidence threshold met)
+ * - Three-tier memory (learning from past interviews)
+ * - Goal decomposition and planning
+ * - Tool-based execution
+ *
  * Interview Types:
- * - reality_check: Initial benchmark - verifies ALL claimed skills, establishes baseline
- * - weekly_sprint: Progress tracking - checks improvement on previously identified gaps
+ * - reality_check: Initial benchmark - verifies ALL claimed skills
+ * - weekly_sprint: Progress tracking - checks improvement on gaps
+ * - skill_deep_dive: Deep dive into specific skills
  *
  * Flow:
  * 1. Fetch interview transcript from DB
  * 2. Fetch user's claimed skills
- * 3. Use AI to analyze transcript for skill demonstrations
+ * 3. Use Autonomous InterviewerAgent for analysis
  * 4. Update user_skills with verification metadata
  * 5. Create skill verification records
+ * 6. Trigger roadmap repath if gaps found
  */
 
 import { task } from '@trigger.dev/sdk';
 import { db } from '@/drizzle/db';
 import { interviews, userSkills, skillVerifications } from '@/drizzle/schema';
 import { eq } from 'drizzle-orm';
-import OpenAI from 'openai';
 
 import {
   shouldSkipEvent,
+  markEventProcessing,
   markEventCompleted,
   markEventFailed,
   publishAgentEvent,
 } from '@/lib/agents/message-bus';
+
+import { analyzeInterview, type AnalysisResult } from '@/lib/agents';
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface InterviewAnalyzerPayload {
   event_id: string;
@@ -40,7 +54,7 @@ interface InterviewAnalyzerPayload {
   interview_type: 'reality_check' | 'weekly_sprint' | 'skill_deep_dive';
 }
 
-interface SkillAssessment {
+interface SkillAssessmentFromAgent {
   skill_name: string;
   claimed_level: string;
   verified_level: 'learning' | 'practicing' | 'proficient' | 'expert';
@@ -48,21 +62,13 @@ interface SkillAssessment {
   evidence: string;
   gap_identified: boolean;
   recommendations: string[];
-  // Weekly sprint specific
   improvement_noted?: boolean;
   previous_level?: string;
 }
 
-interface TranscriptAnalysis {
-  skills_assessed: SkillAssessment[];
-  overall_notes: string;
-  career_alignment_score: number;
-  self_awareness_score: number;
-  communication_score: number;
-  // Weekly sprint specific
-  progress_summary?: string;
-  areas_of_improvement?: string[];
-}
+// ============================================================================
+// Main Task
+// ============================================================================
 
 export const interviewAnalyzer = task({
   id: 'interview.analyze',
@@ -88,16 +94,21 @@ export const interviewAnalyzer = task({
       };
     }
 
+    // Mark as processing
+    await markEventProcessing(event_id);
+
     try {
       console.log('='.repeat(60));
-      console.log('[Interview Analyzer] Job triggered');
+      console.log('[Interview Analyzer] Job triggered (Autonomous Agent Mode)');
       console.log(`  Interview ID: ${interview_id}`);
       console.log(`  User ID: ${user_id}`);
       console.log(`  Duration: ${payload.duration_minutes} minutes`);
       console.log(`  Type: ${payload.interview_type}`);
       console.log('='.repeat(60));
 
+      // =====================================================================
       // Step 1: Fetch interview transcript from DB
+      // =====================================================================
       const interview = await db.query.interviews.findFirst({
         where: eq(interviews.id, interview_id),
       });
@@ -106,9 +117,20 @@ export const interviewAnalyzer = task({
         throw new Error('Interview transcript not found');
       }
 
-      const transcript = interview.raw_data.transcript;
+      // Format transcript for the agent
+      const rawTranscript = interview.raw_data.transcript as Array<{
+        speaker: 'user' | 'agent';
+        text: string;
+        timestamp: string;
+      }>;
+      
+      const formattedTranscript = rawTranscript
+        .map((t) => `${t.speaker === 'user' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
+        .join('\n\n');
 
+      // =====================================================================
       // Step 2: Fetch user's claimed skills
+      // =====================================================================
       const claimedSkills = await db.query.userSkills.findMany({
         where: eq(userSkills.user_id, user_id),
         with: { skill: true },
@@ -124,58 +146,99 @@ export const interviewAnalyzer = task({
         };
       }
 
-      // For weekly sprints, focus on skills with gaps or that need improvement
+      // For weekly sprints, focus on skills with gaps
       const skillsToAnalyze = payload.interview_type === 'weekly_sprint'
         ? claimedSkills.filter(cs =>
             cs.verification_metadata?.gap_identified ||
             cs.verification_metadata?.is_verified
           )
-        : claimedSkills; // Reality check analyzes ALL skills
+        : claimedSkills;
 
-      // Step 3: Analyze transcript for skill demonstrations (AI)
-      const analysis = await analyzeTranscriptWithAI(
-        transcript,
-        skillsToAnalyze.map((cs) => ({
-          name: cs.skill?.name || 'Unknown',
-          claimed_level: cs.proficiency_level,
-          previous_verified_level: cs.verification_metadata?.verified_level,
-          had_gap: cs.verification_metadata?.gap_identified,
-        })),
+      const targetSkills = skillsToAnalyze.map(cs => cs.skill?.name || 'Unknown');
+
+      // =====================================================================
+      // Step 3: Use Autonomous InterviewerAgent for Analysis
+      // =====================================================================
+      console.log('[Interview Analyzer] Starting autonomous agent analysis...');
+      console.log(`  Target skills: ${targetSkills.join(', ')}`);
+
+      // Map interview type to agent's expected type
+      const agentInterviewType = mapInterviewType(payload.interview_type);
+
+      const analysisResult: AnalysisResult = await analyzeInterview(
+        interview_id,
+        user_id,
+        formattedTranscript,
+        {
+          interview_type: agentInterviewType,
+          // Note: job_role and company not stored in interview schema
+          // These are skill verification interviews, not job-specific
+          config: {
+            max_iterations: 3,
+            confidence_threshold: 0.85,
+            timeout_ms: 90000, // 90 seconds
+            enable_learning: true,
+          },
+        }
+      );
+
+      if (!analysisResult.success || !analysisResult.analysis) {
+        // Log detailed error info
+        console.error('[Interview Analyzer] Agent analysis failed!');
+        console.error('  Success:', analysisResult.success);
+        console.error('  Has analysis:', !!analysisResult.analysis);
+        console.error('  Iterations:', analysisResult.iterations);
+        console.error('  Confidence:', analysisResult.confidence);
+        console.error('  Reasoning trace:', analysisResult.reasoning_trace?.slice(-5));
+        throw new Error(`Autonomous agent analysis failed: success=${analysisResult.success}, hasAnalysis=${!!analysisResult.analysis}`);
+      }
+
+      console.log('[Interview Analyzer] Autonomous agent analysis complete');
+      console.log(`  Iterations: ${analysisResult.iterations}`);
+      console.log(`  Confidence: ${(analysisResult.confidence * 100).toFixed(1)}%`);
+      console.log(`  Duration: ${analysisResult.duration_ms}ms`);
+
+      const agentAnalysis = analysisResult.analysis;
+
+      // =====================================================================
+      // Step 4: Map Agent Output to Skill Assessments
+      // =====================================================================
+      const skillAssessments = mapAgentOutputToSkillAssessments(
+        agentAnalysis,
+        claimedSkills,
         payload.interview_type
       );
 
-      console.log('[Interview Analyzer] AI Analysis complete');
-      console.log(`  Skills assessed: ${analysis.skills_assessed.length}`);
-
-      // Step 4: Update user_skills with verification metadata
+      // =====================================================================
+      // Step 5: Update user_skills with verification metadata
+      // =====================================================================
       let gapsFound = 0;
       let skillsVerified = 0;
       let skillsImproved = 0;
 
-      for (const assessment of analysis.skills_assessed) {
-        // Find matching user skill
+      for (const assessment of skillAssessments) {
         const userSkill = claimedSkills.find(
-          (cs) =>
-            cs.skill?.name?.toLowerCase() === assessment.skill_name.toLowerCase()
+          (cs) => cs.skill?.name?.toLowerCase() === assessment.skill_name.toLowerCase()
         );
 
         if (!userSkill) continue;
 
-        const previousLevel = userSkill.verification_metadata?.verified_level;
+        const previousLevel = userSkill.verification_metadata?.verified_level as string | undefined;
         const isImprovement = assessment.improvement_noted ||
           (previousLevel && levelToNumber(assessment.verified_level) > levelToNumber(previousLevel));
 
         // Update verification metadata
+        const existingMetadata = userSkill.verification_metadata as Record<string, unknown> || {};
         const newMetadata = {
-          ...userSkill.verification_metadata,
+          ...existingMetadata,
           is_verified: true,
-          verification_count:
-            (userSkill.verification_metadata?.verification_count || 0) + 1,
+          verification_count: ((existingMetadata.verification_count as number) || 0) + 1,
           latest_proof: {
             interview_id,
             timestamp: new Date().toISOString(),
             transcript_snippet: assessment.evidence.slice(0, 500),
             evaluator_confidence: assessment.confidence,
+            agent_analysis: true, // Mark as autonomous agent analysis
           },
           verified_level: assessment.verified_level,
           gap_identified: assessment.gap_identified,
@@ -183,7 +246,7 @@ export const interviewAnalyzer = task({
           // Track improvement history for weekly sprints
           ...(payload.interview_type === 'weekly_sprint' && previousLevel ? {
             improvement_history: [
-              ...(userSkill.verification_metadata as { improvement_history?: Array<{ from: string; to: string; date: string; interview_id: string }> })?.improvement_history || [],
+              ...((existingMetadata.improvement_history as Array<unknown>) || []),
               ...(isImprovement ? [{
                 from: previousLevel,
                 to: assessment.verified_level,
@@ -205,8 +268,10 @@ export const interviewAnalyzer = task({
 
         // Create verification record
         const summaryPrefix = payload.interview_type === 'reality_check'
-          ? 'Reality Check'
-          : 'Weekly Sprint';
+          ? 'Reality Check (Autonomous)'
+          : payload.interview_type === 'weekly_sprint'
+            ? 'Weekly Sprint (Autonomous)'
+            : 'Skill Deep Dive (Autonomous)';
 
         await db.insert(skillVerifications).values({
           user_skill_id: userSkill.id,
@@ -219,49 +284,65 @@ export const interviewAnalyzer = task({
               : `${summaryPrefix}: Verified at ${assessment.verified_level} level`,
           raw_data: {
             transcript_snippet: assessment.evidence,
-            evaluator_notes: assessment.recommendations.join('; '),
+            evaluator_notes: `${assessment.recommendations.join('; ')} | Agent iterations: ${analysisResult.iterations}, confidence: ${(analysisResult.confidence * 100).toFixed(1)}%`,
             confidence_score: assessment.confidence,
           },
         });
 
-        if (assessment.gap_identified) {
-          gapsFound++;
-        }
-        if (isImprovement) {
-          skillsImproved++;
-        }
+        if (assessment.gap_identified) gapsFound++;
+        if (isImprovement) skillsImproved++;
         skillsVerified++;
       }
 
-      // Update interview with overall scores
+      // =====================================================================
+      // Step 6: Update interview with analysis results
+      // =====================================================================
+      const overallScore = (
+        agentAnalysis.detailed_feedback.communication.score +
+        agentAnalysis.detailed_feedback.technical.score +
+        agentAnalysis.detailed_feedback.problem_solving.score +
+        agentAnalysis.detailed_feedback.cultural_fit.score
+      ) / 4;
+
+      // Map agent output to expected schema format
+      const analysisForSchema = {
+        skills_assessed: skillAssessments.map(a => ({
+          skill_name: a.skill_name,
+          claimed_level: a.claimed_level,
+          verified_level: a.verified_level,
+          confidence: a.confidence,
+          evidence: a.evidence,
+          gap_identified: a.gap_identified,
+          recommendations: a.recommendations,
+        })),
+        overall_notes: [
+          `Analysis by Autonomous Agent (${analysisResult.iterations} iterations, ${(analysisResult.confidence * 100).toFixed(1)}% confidence)`,
+          `Overall Score: ${agentAnalysis.overall_score}/100`,
+          `Strengths: ${agentAnalysis.strengths.map(s => s.description).join('; ')}`,
+          `Areas for Improvement: ${agentAnalysis.improvements.map(i => i.description).join('; ')}`,
+        ].join('\n'),
+        career_alignment_score: agentAnalysis.detailed_feedback.cultural_fit.score,
+        self_awareness_score: agentAnalysis.detailed_feedback.problem_solving.score,
+        communication_score: agentAnalysis.detailed_feedback.communication.score,
+      };
+
       await db
         .update(interviews)
         .set({
-          overall_score: String(
-            (analysis.career_alignment_score +
-              analysis.self_awareness_score +
-              analysis.communication_score) /
-              3
-          ),
+          overall_score: String(overallScore),
           raw_data: {
             ...interview.raw_data,
-            analysis: {
-              skills_assessed: analysis.skills_assessed,
-              overall_notes: analysis.overall_notes,
-              career_alignment_score: analysis.career_alignment_score,
-              self_awareness_score: analysis.self_awareness_score,
-              communication_score: analysis.communication_score,
-            },
+            analysis: analysisForSchema,
           },
           updated_at: new Date(),
         })
         .where(eq(interviews.id, interview_id));
 
-      // Step 5: Trigger roadmap repath if gaps were found (Truth Loop)
-      // This closes the feedback loop from interviews to roadmaps
+      // =====================================================================
+      // Step 7: Trigger roadmap repath if gaps were found (Truth Loop)
+      // =====================================================================
       if (gapsFound > 0) {
-        // Collect the names of skills with gaps for the repath event
-        const gapSkillNames = analysis.skills_assessed
+        const gapSkillNames = skillAssessments
           .filter((a) => a.gap_identified)
           .map((a) => a.skill_name);
 
@@ -280,21 +361,24 @@ export const interviewAnalyzer = task({
               gaps_count: gapsFound,
               verified_count: skillsVerified,
               improved_count: skillsImproved,
+              autonomous_analysis: true,
             },
           },
         });
       }
 
-      // Mark event as completed
+      // =====================================================================
+      // Complete
+      // =====================================================================
       await markEventCompleted(event_id);
 
-      console.log('[Interview Analyzer] Complete');
+      console.log('[Interview Analyzer] Complete (Autonomous Agent Mode)');
       console.log(`  Interview type: ${payload.interview_type}`);
       console.log(`  Skills verified: ${skillsVerified}`);
       console.log(`  Gaps found: ${gapsFound}`);
-      if (payload.interview_type === 'weekly_sprint') {
-        console.log(`  Skills improved: ${skillsImproved}`);
-      }
+      console.log(`  Skills improved: ${skillsImproved}`);
+      console.log(`  Agent iterations: ${analysisResult.iterations}`);
+      console.log(`  Agent confidence: ${(analysisResult.confidence * 100).toFixed(1)}%`);
 
       return {
         success: true,
@@ -304,8 +388,12 @@ export const interviewAnalyzer = task({
         skills_verified: skillsVerified,
         gaps_found: gapsFound,
         skills_improved: skillsImproved,
-        analysis_summary: analysis.overall_notes,
-        progress_summary: analysis.progress_summary,
+        agent_analysis: {
+          iterations: analysisResult.iterations,
+          confidence: analysisResult.confidence,
+          duration_ms: analysisResult.duration_ms,
+          overall_score: agentAnalysis.overall_score,
+        },
       };
     } catch (error) {
       console.error('[Interview Analyzer] Error:', error);
@@ -320,227 +408,160 @@ export const interviewAnalyzer = task({
   },
 });
 
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
 /**
- * Analyze interview transcript using OpenAI to assess skill levels
+ * Map our interview types to agent's expected types
  */
-async function analyzeTranscriptWithAI(
-  transcript: Array<{
-    speaker: 'user' | 'agent';
-    text: string;
-    timestamp: string;
-    emotions?: Record<string, number>;
-  }>,
+function mapInterviewType(
+  type: 'reality_check' | 'weekly_sprint' | 'skill_deep_dive'
+): 'behavioral' | 'technical' | 'case' | 'mixed' {
+  switch (type) {
+    case 'reality_check':
+      return 'mixed'; // Reality check covers all aspects
+    case 'weekly_sprint':
+      return 'technical'; // Weekly sprints focus on technical skills
+    case 'skill_deep_dive':
+      return 'technical'; // Deep dives are technical
+    default:
+      return 'mixed';
+  }
+}
+
+/**
+ * Map agent output to skill assessments
+ */
+function mapAgentOutputToSkillAssessments(
+  analysis: NonNullable<AnalysisResult['analysis']>,
   claimedSkills: Array<{
-    name: string;
-    claimed_level: string;
-    previous_verified_level?: string;
-    had_gap?: boolean;
+    id: string;
+    skill?: { name: string } | null;
+    proficiency_level: string;
+    verification_metadata?: Record<string, unknown> | null;
   }>,
-  interviewType: 'reality_check' | 'weekly_sprint' | 'skill_deep_dive'
-): Promise<TranscriptAnalysis> {
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
+  interviewType: string
+): SkillAssessmentFromAgent[] {
+  const assessments: SkillAssessmentFromAgent[] = [];
 
-  // Format transcript for analysis
-  const formattedTranscript = transcript
-    .map((t) => `${t.speaker === 'user' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
-    .join('\n\n');
+  // Extract skills from strengths
+  for (const strength of analysis.strengths) {
+    const matchingSkill = claimedSkills.find(cs =>
+      strength.category.toLowerCase().includes(cs.skill?.name?.toLowerCase() || '') ||
+      strength.description.toLowerCase().includes(cs.skill?.name?.toLowerCase() || '')
+    );
 
-  // Different prompts based on interview type
-  const prompt = interviewType === 'weekly_sprint'
-    ? buildWeeklySprintPrompt(claimedSkills, formattedTranscript)
-    : buildRealityCheckPrompt(claimedSkills, formattedTranscript);
+    if (matchingSkill) {
+      // Check if we already have an assessment for this skill
+      const existingIndex = assessments.findIndex(
+        a => a.skill_name.toLowerCase() === matchingSkill.skill?.name?.toLowerCase()
+      );
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are an expert technical interviewer. Analyze transcripts objectively and provide actionable feedback. Always respond with valid JSON.',
-      },
-      { role: 'user', content: prompt },
-    ],
-    temperature: 0.3,
-    response_format: { type: 'json_object' },
-  });
-
-  const content = response.choices[0].message.content;
-  if (!content) {
-    throw new Error('No response from OpenAI');
+      if (existingIndex === -1) {
+        const previousLevel = matchingSkill.verification_metadata?.verified_level as string | undefined;
+        assessments.push({
+          skill_name: matchingSkill.skill?.name || 'Unknown',
+          claimed_level: matchingSkill.proficiency_level,
+          verified_level: mapScoreToLevel(analysis.overall_score),
+          confidence: analysis.overall_score / 100,
+          evidence: strength.evidence,
+          gap_identified: false, // Strengths don't have gaps
+          recommendations: [],
+          improvement_noted: interviewType === 'weekly_sprint' && previousLevel
+            ? levelToNumber(mapScoreToLevel(analysis.overall_score)) > levelToNumber(previousLevel)
+            : undefined,
+          previous_level: previousLevel,
+        });
+      }
+    }
   }
 
-  const analysis = JSON.parse(content) as TranscriptAnalysis;
+  // Extract skills from improvements (these are potential gaps)
+  for (const improvement of analysis.improvements) {
+    const matchingSkill = claimedSkills.find(cs =>
+      improvement.category.toLowerCase().includes(cs.skill?.name?.toLowerCase() || '') ||
+      improvement.description.toLowerCase().includes(cs.skill?.name?.toLowerCase() || '')
+    );
 
-  // Validate and normalize the response
-  return {
-    skills_assessed: analysis.skills_assessed.map((s) => ({
-      skill_name: s.skill_name,
-      claimed_level: s.claimed_level,
-      verified_level: normalizeLevel(s.verified_level),
-      confidence: Math.min(1, Math.max(0, s.confidence)),
-      evidence: s.evidence || '',
-      gap_identified: s.gap_identified || false,
-      recommendations: s.recommendations || [],
-      improvement_noted: s.improvement_noted,
-      previous_level: s.previous_level,
-    })),
-    overall_notes: analysis.overall_notes || '',
-    career_alignment_score: Math.min(10, Math.max(0, analysis.career_alignment_score)),
-    self_awareness_score: Math.min(10, Math.max(0, analysis.self_awareness_score)),
-    communication_score: Math.min(10, Math.max(0, analysis.communication_score)),
-    progress_summary: analysis.progress_summary,
-    areas_of_improvement: analysis.areas_of_improvement,
-  };
+    if (matchingSkill) {
+      const existingIndex = assessments.findIndex(
+        a => a.skill_name.toLowerCase() === matchingSkill.skill?.name?.toLowerCase()
+      );
+
+      const previousLevel = matchingSkill.verification_metadata?.verified_level as string | undefined;
+      const verifiedLevel = improvement.priority === 'high' ? 'learning' :
+                           improvement.priority === 'medium' ? 'practicing' : 'proficient';
+
+      // Determine if there's a gap
+      const claimedLevelNum = levelToNumber(matchingSkill.proficiency_level);
+      const verifiedLevelNum = levelToNumber(verifiedLevel);
+      const hasGap = claimedLevelNum > verifiedLevelNum;
+
+      if (existingIndex === -1) {
+        assessments.push({
+          skill_name: matchingSkill.skill?.name || 'Unknown',
+          claimed_level: matchingSkill.proficiency_level,
+          verified_level: verifiedLevel,
+          confidence: 0.7, // Lower confidence for improvement-based assessments
+          evidence: improvement.description,
+          gap_identified: hasGap,
+          recommendations: [improvement.suggestion],
+          improvement_noted: false,
+          previous_level: previousLevel,
+        });
+      } else {
+        // Update existing assessment with gap info
+        assessments[existingIndex].gap_identified = hasGap;
+        assessments[existingIndex].recommendations.push(improvement.suggestion);
+      }
+    }
+  }
+
+  // For skills not mentioned, infer from overall score
+  for (const skill of claimedSkills) {
+    const exists = assessments.some(
+      a => a.skill_name.toLowerCase() === skill.skill?.name?.toLowerCase()
+    );
+
+    if (!exists && skill.skill?.name) {
+      const previousLevel = skill.verification_metadata?.verified_level as string | undefined;
+      const inferredLevel = mapScoreToLevel(analysis.overall_score);
+      const claimedLevelNum = levelToNumber(skill.proficiency_level);
+      const inferredLevelNum = levelToNumber(inferredLevel);
+
+      assessments.push({
+        skill_name: skill.skill.name,
+        claimed_level: skill.proficiency_level,
+        verified_level: inferredLevel,
+        confidence: 0.5, // Lower confidence for inferred assessments
+        evidence: 'Inferred from overall interview performance',
+        gap_identified: claimedLevelNum > inferredLevelNum + 1, // Only flag significant gaps
+        recommendations: [],
+        improvement_noted: interviewType === 'weekly_sprint' && previousLevel
+          ? inferredLevelNum > levelToNumber(previousLevel)
+          : undefined,
+        previous_level: previousLevel,
+      });
+    }
+  }
+
+  return assessments;
 }
 
 /**
- * Build prompt for Reality Check interview - Initial benchmark
+ * Map overall score (0-100) to proficiency level
  */
-function buildRealityCheckPrompt(
-  claimedSkills: Array<{ name: string; claimed_level: string }>,
-  formattedTranscript: string
-): string {
-  return `You are an expert technical interviewer analyzing a REALITY CHECK interview transcript.
-
-This is the candidate's FIRST interview - we're establishing their baseline skill levels.
-
-## Candidate's Claimed Skills (from resume)
-${claimedSkills.map((s) => `- ${s.name}: ${s.claimed_level}`).join('\n')}
-
-## Interview Transcript
-${formattedTranscript}
-
-## Your Task
-Analyze the transcript and VERIFY each claimed skill based on what the candidate actually demonstrated.
-This is the initial benchmark - be thorough but fair.
-
-For each skill, determine:
-1. **verified_level**: The actual skill level demonstrated (learning, practicing, proficient, expert)
-2. **confidence**: How confident you are in this assessment (0.0 to 1.0)
-3. **evidence**: Key quotes or moments that support your assessment
-4. **gap_identified**: TRUE if there's a significant gap between claimed and verified level
-5. **recommendations**: Specific, actionable areas to improve
-
-Also provide overall scores (0-10) for:
-- career_alignment_score: Does their passion match their career goals?
-- self_awareness_score: Do they accurately know their own abilities?
-- communication_score: How clearly do they explain technical concepts?
-
-Respond in JSON format:
-{
-  "skills_assessed": [
-    {
-      "skill_name": "Python",
-      "claimed_level": "expert",
-      "verified_level": "proficient",
-      "confidence": 0.85,
-      "evidence": "Candidate explained decorators well but struggled with metaclasses...",
-      "gap_identified": true,
-      "recommendations": ["Study metaclasses", "Practice design patterns"]
-    }
-  ],
-  "overall_notes": "Summary of the candidate's baseline performance...",
-  "career_alignment_score": 7.5,
-  "self_awareness_score": 6.0,
-  "communication_score": 8.0
-}`;
-}
-
-/**
- * Build prompt for Weekly Sprint interview - Progress tracking
- */
-function buildWeeklySprintPrompt(
-  claimedSkills: Array<{
-    name: string;
-    claimed_level: string;
-    previous_verified_level?: string;
-    had_gap?: boolean;
-  }>,
-  formattedTranscript: string
-): string {
-  const skillsWithGaps = claimedSkills.filter(s => s.had_gap);
-  const otherSkills = claimedSkills.filter(s => !s.had_gap);
-
-  return `You are an expert technical interviewer analyzing a WEEKLY SPRINT interview transcript.
-
-This is a FOLLOW-UP interview to track the candidate's PROGRESS since their last assessment.
-
-## Skills with Previously Identified Gaps (FOCUS ON THESE)
-${skillsWithGaps.length > 0
-  ? skillsWithGaps.map((s) =>
-      `- ${s.name}: Previously verified at "${s.previous_verified_level}" (gap from claimed "${s.claimed_level}")`
-    ).join('\n')
-  : 'No previous gaps identified'}
-
-## Other Verified Skills
-${otherSkills.map((s) =>
-  `- ${s.name}: Currently at "${s.previous_verified_level || s.claimed_level}"`
-).join('\n')}
-
-## Interview Transcript
-${formattedTranscript}
-
-## Your Task
-Track the candidate's PROGRESS, especially on skills where gaps were previously identified.
-Look for signs of learning, practice, and improvement.
-
-For each skill discussed, determine:
-1. **verified_level**: Current skill level demonstrated (learning, practicing, proficient, expert)
-2. **previous_level**: Their level from last assessment (if known)
-3. **improvement_noted**: TRUE if they've improved since last assessment
-4. **confidence**: How confident you are (0.0 to 1.0)
-5. **evidence**: Key quotes showing improvement or current level
-6. **gap_identified**: TRUE if there's still a significant gap
-7. **recommendations**: Next steps to continue improving
-
-Also provide:
-- overall_notes: Summary of their progress
-- progress_summary: Brief description of improvements made
-- areas_of_improvement: List of areas where they showed growth
-- career_alignment_score, self_awareness_score, communication_score (0-10)
-
-Respond in JSON format:
-{
-  "skills_assessed": [
-    {
-      "skill_name": "Python",
-      "claimed_level": "expert",
-      "previous_level": "practicing",
-      "verified_level": "proficient",
-      "improvement_noted": true,
-      "confidence": 0.85,
-      "evidence": "Candidate now correctly explains metaclasses, showing significant improvement...",
-      "gap_identified": false,
-      "recommendations": ["Continue practicing advanced patterns"]
-    }
-  ],
-  "overall_notes": "Summary of the candidate's progress this week...",
-  "progress_summary": "Showed improvement in Python metaclasses and design patterns",
-  "areas_of_improvement": ["Python metaclasses", "Design patterns"],
-  "career_alignment_score": 8.0,
-  "self_awareness_score": 7.5,
-  "communication_score": 8.0
-}`;
-}
-
-function normalizeLevel(
-  level: string
-): 'learning' | 'practicing' | 'proficient' | 'expert' {
-  const normalized = level.toLowerCase();
-  if (normalized.includes('expert') || normalized.includes('advanced')) {
-    return 'expert';
-  }
-  if (normalized.includes('proficient') || normalized.includes('intermediate')) {
-    return 'proficient';
-  }
-  if (normalized.includes('practicing') || normalized.includes('developing')) {
-    return 'practicing';
-  }
+function mapScoreToLevel(score: number): 'learning' | 'practicing' | 'proficient' | 'expert' {
+  if (score >= 85) return 'expert';
+  if (score >= 70) return 'proficient';
+  if (score >= 50) return 'practicing';
   return 'learning';
 }
 
+/**
+ * Convert level to number for comparison
+ */
 function levelToNumber(level: string): number {
   const levelMap: Record<string, number> = {
     learning: 1,

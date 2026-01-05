@@ -21,6 +21,11 @@ export * from './schema/market';
 // Agent Orchestration Domain (Message Bus)
 export * from './schema/agent-events';
 
+// Autonomous Agent Domain (Agentic Architecture)
+export * from './schema/agent-memory';
+export * from './schema/agent-plans';
+export * from './schema/agent-states';
+
 // Notifications Domain
 export * from './schema/notifications';
 

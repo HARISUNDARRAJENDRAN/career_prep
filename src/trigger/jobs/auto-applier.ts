@@ -6,28 +6,34 @@
  *
  * This job is part of the Action Agent's autonomous job application system.
  * It evaluates whether a matched job is worth applying to and, if the user
- * has auto-apply enabled, automatically submits an application.
+ * has auto-apply enabled, generates a cover letter and creates an application.
  *
  * Flow:
  * 1. Check if user has auto-apply enabled
- * 2. Fetch user's latest resume document
- * 3. Evaluate match quality (skills alignment)
- * 4. If auto-apply enabled and match score is high enough:
- *    a. Generate tailored cover letter using AI + RAG
- *    b. Submit application
- *    c. Create job_applications record
- *    d. Publish APPLICATION_SUBMITTED event
- *
- * NOTE: This file uses a local stub until Trigger.dev is installed.
- * Run `npx trigger.dev@latest init` to enable real background job execution.
+ * 2. Validate match score against user's threshold
+ * 3. Check daily application limit
+ * 4. Check excluded companies list
+ * 5. Generate tailored cover letter using AI + RAG
+ * 6. Create job_applications record
+ * 7. Publish APPLICATION_SUBMITTED event
  */
 
 import { task } from '@trigger.dev/sdk';
-
+import { db } from '@/drizzle/db';
+import {
+  userProfiles,
+  jobListings,
+  jobApplications,
+  applicationDocuments,
+} from '@/drizzle/schema';
+import { eq, and, gte, sql } from 'drizzle-orm';
+import { generateCoverLetter } from '@/services/cover-letter';
 import {
   shouldSkipEvent,
   markEventCompleted,
   markEventFailed,
+  markEventProcessing,
+  publishAgentEvent,
 } from '@/lib/agents/message-bus';
 
 interface AutoApplierPayload {
@@ -39,17 +45,67 @@ interface AutoApplierPayload {
   missing_skills: string[];
 }
 
+/**
+ * Count applications submitted today by user
+ */
+async function countTodayApplications(userId: string): Promise<number> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const result = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(jobApplications)
+    .where(
+      and(
+        eq(jobApplications.user_id, userId),
+        gte(jobApplications.applied_at, todayStart)
+      )
+    );
+
+  return result[0]?.count || 0;
+}
+
+/**
+ * Check if a company is in the user's exclusion list
+ */
+function isCompanyExcluded(
+  company: string,
+  excludedCompanies: string[] | null
+): boolean {
+  if (!excludedCompanies || excludedCompanies.length === 0) {
+    return false;
+  }
+
+  const companyLower = company.toLowerCase().trim();
+  return excludedCompanies.some(
+    (excluded) => excluded.toLowerCase().trim() === companyLower
+  );
+}
+
 export const autoApplier = task({
   id: 'action.evaluate-match',
+  retry: {
+    maxAttempts: 3,
+    factor: 2,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 30000,
+  },
   run: async (payload: AutoApplierPayload) => {
-    const { event_id, user_id, job_listing_id, match_score } = payload;
+    const {
+      event_id,
+      user_id,
+      job_listing_id,
+      match_score,
+      matching_skills,
+      missing_skills,
+    } = payload;
 
     // =========================================================================
-    // IDEMPOTENCY CHECK - Must be first!
+    // IDEMPOTENCY CHECK
     // =========================================================================
     const idempotencyCheck = await shouldSkipEvent(event_id);
     if (idempotencyCheck.skip) {
-      console.log(`Skipping event ${event_id}: ${idempotencyCheck.reason}`);
+      console.log(`[Auto Applier] Skipping event ${event_id}: ${idempotencyCheck.reason}`);
       return {
         success: true,
         skipped: true,
@@ -57,94 +113,246 @@ export const autoApplier = task({
       };
     }
 
-    try {
-      // =========================================================================
-      // TODO: Implement in Phase 7+ (needs Vector DB for RAG)
-      // =========================================================================
+    await markEventProcessing(event_id);
 
+    try {
       console.log('='.repeat(60));
-      console.log('[Auto Applier] Job triggered');
+      console.log('[Auto Applier] Evaluating job match');
       console.log(`  User ID: ${user_id}`);
       console.log(`  Job Listing ID: ${job_listing_id}`);
       console.log(`  Match Score: ${match_score}%`);
-      console.log(`  Matching Skills: ${payload.matching_skills.join(', ')}`);
-      console.log(`  Missing Skills: ${payload.missing_skills.join(', ')}`);
+      console.log(`  Matching Skills: ${matching_skills.join(', ')}`);
+      console.log(`  Missing Skills: ${missing_skills.join(', ')}`);
       console.log('='.repeat(60));
 
-      // Step 1: Check if user has auto-apply enabled
-      // const userProfile = await db.query.userProfiles.findFirst({
-      //   where: eq(userProfiles.user_id, user_id),
-      // });
-      //
-      // if (!userProfile?.auto_apply_enabled) {
-      //   console.log('[Auto Applier] Auto-apply not enabled for user');
-      //   await markEventCompleted(event_id);
-      //   return { success: true, applied: false, reason: 'auto_apply_disabled' };
-      // }
+      // =========================================================================
+      // Step 1: Fetch user profile with auto-apply settings
+      // =========================================================================
+      const userProfile = await db.query.userProfiles.findFirst({
+        where: eq(userProfiles.user_id, user_id),
+      });
 
-      // Step 2: Check match score threshold
-      // const MIN_AUTO_APPLY_SCORE = userProfile.auto_apply_threshold || 75;
-      // if (match_score < MIN_AUTO_APPLY_SCORE) {
-      //   console.log(`[Auto Applier] Score ${match_score} below threshold ${MIN_AUTO_APPLY_SCORE}`);
-      //   await markEventCompleted(event_id);
-      //   return { success: true, applied: false, reason: 'below_threshold' };
-      // }
+      if (!userProfile) {
+        throw new Error(`User profile not found for ${user_id}`);
+      }
 
-      // Step 3: Fetch user's latest resume document
-      // const latestDocument = await db.query.applicationDocuments.findFirst({
-      //   where: eq(applicationDocuments.user_id, user_id),
-      //   orderBy: [desc(applicationDocuments.created_at)],
-      // });
+      // =========================================================================
+      // Step 2: Check if auto-apply is enabled
+      // =========================================================================
+      if (!userProfile.auto_apply_enabled) {
+        console.log('[Auto Applier] Auto-apply not enabled for user');
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'auto_apply_disabled',
+          user_id,
+          job_listing_id,
+        };
+      }
 
-      // Step 4: Fetch job listing details
-      // const jobListing = await db.query.jobListings.findFirst({
-      //   where: eq(jobListings.id, job_listing_id),
-      // });
+      // =========================================================================
+      // Step 3: Check match score threshold
+      // =========================================================================
+      const threshold = userProfile.auto_apply_threshold || 75;
+      if (match_score < threshold) {
+        console.log(
+          `[Auto Applier] Match score ${match_score}% below threshold ${threshold}%`
+        );
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'below_threshold',
+          match_score,
+          threshold,
+          user_id,
+          job_listing_id,
+        };
+      }
 
-      // Step 5: Generate tailored cover letter (AI + RAG)
-      // const coverLetter = await generateCoverLetter(
-      //   userProfile,
-      //   jobListing,
-      //   latestDocument
-      // );
+      // =========================================================================
+      // Step 4: Check daily application limit
+      // =========================================================================
+      const todayCount = await countTodayApplications(user_id);
+      const dailyLimit = userProfile.auto_apply_daily_limit || 5;
 
-      // Step 6: Submit application (platform-specific)
-      // const applicationResult = await submitApplication(
-      //   jobListing,
-      //   latestDocument,
-      //   coverLetter
-      // );
+      if (todayCount >= dailyLimit) {
+        console.log(
+          `[Auto Applier] Daily limit reached (${todayCount}/${dailyLimit})`
+        );
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'daily_limit_reached',
+          today_count: todayCount,
+          daily_limit: dailyLimit,
+          user_id,
+          job_listing_id,
+        };
+      }
 
-      // Step 7: Create job_applications record
-      // const [application] = await db.insert(jobApplications).values({
-      //   user_id,
-      //   job_listing_id,
-      //   document_id: latestDocument.id,
-      //   status: 'applied',
-      //   applied_at: new Date(),
-      //   application_method: 'auto',
-      // }).returning();
+      // =========================================================================
+      // Step 5: Fetch job listing details
+      // =========================================================================
+      const jobListing = await db.query.jobListings.findFirst({
+        where: eq(jobListings.id, job_listing_id),
+      });
 
-      // Step 8: Publish APPLICATION_SUBMITTED event
-      // await publishAgentEvent({
-      //   type: 'APPLICATION_SUBMITTED',
-      //   payload: {
-      //     application_id: application.id,
-      //     user_id,
-      //     job_listing_id,
-      //     method: 'auto',
-      //   },
-      // });
+      if (!jobListing) {
+        throw new Error(`Job listing not found: ${job_listing_id}`);
+      }
+
+      console.log(`[Auto Applier] Job: ${jobListing.title} at ${jobListing.company}`);
+
+      // =========================================================================
+      // Step 6: Check excluded companies
+      // =========================================================================
+      if (isCompanyExcluded(jobListing.company, userProfile.auto_apply_excluded_companies)) {
+        console.log(`[Auto Applier] Company "${jobListing.company}" is excluded`);
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'company_excluded',
+          company: jobListing.company,
+          user_id,
+          job_listing_id,
+        };
+      }
+
+      // =========================================================================
+      // Step 7: Check if already applied to this job
+      // =========================================================================
+      const existingApplication = await db.query.jobApplications.findFirst({
+        where: and(
+          eq(jobApplications.user_id, user_id),
+          eq(jobApplications.job_listing_id, job_listing_id)
+        ),
+      });
+
+      if (existingApplication) {
+        console.log('[Auto Applier] Already applied to this job');
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'already_applied',
+          existing_application_id: existingApplication.id,
+          user_id,
+          job_listing_id,
+        };
+      }
+
+      // =========================================================================
+      // Step 8: Generate personalized cover letter
+      // =========================================================================
+      console.log('[Auto Applier] Generating cover letter...');
+
+      const coverLetterResult = await generateCoverLetter({
+        userId: user_id,
+        jobListingId: job_listing_id,
+        matchingSkills: matching_skills,
+        missingSkills: missing_skills,
+        matchScore: match_score,
+      });
+
+      console.log(
+        `[Auto Applier] Cover letter generated (${coverLetterResult.wordCount} words)`
+      );
+
+      // =========================================================================
+      // Step 9: Create application document record
+      // =========================================================================
+      const [coverLetterDoc] = await db
+        .insert(applicationDocuments)
+        .values({
+          user_id,
+          type: 'cover_letter',
+          version: 1,
+          name: `Cover Letter - ${jobListing.company} - ${jobListing.title}`,
+          metadata: {
+            target_role: jobListing.title,
+            skills_highlighted: matching_skills,
+            last_modified_by: 'agent',
+          },
+        })
+        .returning();
+
+      console.log(`[Auto Applier] Created cover letter document: ${coverLetterDoc.id}`);
+
+      // =========================================================================
+      // Step 10: Create job application record
+      // =========================================================================
+      const applicationStatus = userProfile.auto_apply_require_review
+        ? 'draft' // Require user review
+        : 'applied'; // Auto-submit
+
+      const [application] = await db
+        .insert(jobApplications)
+        .values({
+          user_id,
+          job_listing_id,
+          document_id: coverLetterDoc.id,
+          company: jobListing.company,
+          role: jobListing.title,
+          location: jobListing.location,
+          status: applicationStatus,
+          applied_at: applicationStatus === 'applied' ? new Date() : null,
+          last_activity_at: new Date(),
+          raw_data: {
+            job_description: jobListing.raw_data?.description,
+            match_score,
+            agent_reasoning: coverLetterResult.keyPoints.join('; '),
+          },
+        })
+        .returning();
+
+      console.log(
+        `[Auto Applier] Created application: ${application.id} (status: ${applicationStatus})`
+      );
+
+      // =========================================================================
+      // Step 11: Publish APPLICATION_SUBMITTED event
+      // =========================================================================
+      if (applicationStatus === 'applied') {
+        await publishAgentEvent({
+          type: 'APPLICATION_SUBMITTED',
+          payload: {
+            application_id: application.id,
+            user_id,
+            job_listing_id,
+            method: 'auto',
+            match_score,
+            cover_letter_id: coverLetterDoc.id,
+          },
+        });
+
+        console.log('[Auto Applier] Published APPLICATION_SUBMITTED event');
+      }
 
       // Mark event as completed
       await markEventCompleted(event_id);
 
+      console.log('='.repeat(60));
+      console.log('[Auto Applier] Application process complete!');
+      console.log(`  Status: ${applicationStatus}`);
+      console.log(`  Application ID: ${application.id}`);
+      console.log('='.repeat(60));
+
       return {
         success: true,
-        applied: false, // Will be true when implemented
+        applied: applicationStatus === 'applied',
+        requires_review: applicationStatus === 'draft',
+        application_id: application.id,
+        cover_letter_id: coverLetterDoc.id,
+        company: jobListing.company,
+        role: jobListing.title,
+        match_score,
+        key_points: coverLetterResult.keyPoints,
         user_id,
         job_listing_id,
-        match_score,
       };
     } catch (error) {
       console.error('[Auto Applier] Error:', error);
@@ -162,21 +370,25 @@ export const autoApplier = task({
 /**
  * Execute Apply Job
  *
- * Triggered when: AUTO_APPLY_TRIGGERED event is published
+ * Triggered when: User approves a draft application or AUTO_APPLY_TRIGGERED
  * Purpose: Actually execute the application submission
  *
- * This is a separate job to allow for manual triggering and better tracking.
+ * This job handles the final submission step for applications that required review.
  */
 export const executeApply = task({
   id: 'action.execute-apply',
+  retry: {
+    maxAttempts: 2,
+    factor: 2,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 15000,
+  },
   run: async (payload: {
     event_id: string;
+    application_id: string;
     user_id: string;
-    job_listing_id: string;
-    document_id: string;
-    confidence_score: number;
   }) => {
-    const { event_id, user_id, job_listing_id } = payload;
+    const { event_id, application_id, user_id } = payload;
 
     // Idempotency check
     const idempotencyCheck = await shouldSkipEvent(event_id);
@@ -184,19 +396,78 @@ export const executeApply = task({
       return { success: true, skipped: true, reason: idempotencyCheck.reason };
     }
 
-    try {
-      console.log('[Execute Apply] Executing application submission');
-      console.log(`  User: ${user_id}, Job: ${job_listing_id}`);
+    await markEventProcessing(event_id);
 
-      // TODO: Implement actual application submission logic
+    try {
+      console.log('[Execute Apply] Submitting application');
+      console.log(`  Application ID: ${application_id}`);
+      console.log(`  User ID: ${user_id}`);
+
+      // Fetch application
+      const application = await db.query.jobApplications.findFirst({
+        where: and(
+          eq(jobApplications.id, application_id),
+          eq(jobApplications.user_id, user_id)
+        ),
+      });
+
+      if (!application) {
+        throw new Error(`Application not found: ${application_id}`);
+      }
+
+      if (application.status !== 'draft') {
+        console.log(`[Execute Apply] Application already submitted (status: ${application.status})`);
+        await markEventCompleted(event_id);
+        return {
+          success: true,
+          applied: false,
+          reason: 'already_submitted',
+          current_status: application.status,
+        };
+      }
+
+      // Update application status to 'applied'
+      await db
+        .update(jobApplications)
+        .set({
+          status: 'applied',
+          applied_at: new Date(),
+          last_activity_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where(eq(jobApplications.id, application_id));
+
+      // Publish APPLICATION_SUBMITTED event
+      await publishAgentEvent({
+        type: 'APPLICATION_SUBMITTED',
+        payload: {
+          application_id,
+          user_id,
+          job_listing_id: application.job_listing_id,
+          method: 'manual', // User approved this one
+          match_score: (application.raw_data as { match_score?: number })?.match_score || 0,
+        },
+      });
 
       await markEventCompleted(event_id);
-      return { success: true, applied: false };
+
+      console.log('[Execute Apply] Application submitted successfully');
+
+      return {
+        success: true,
+        applied: true,
+        application_id,
+        company: application.company,
+        role: application.role,
+      };
     } catch (error) {
+      console.error('[Execute Apply] Error:', error);
+
       await markEventFailed(
         event_id,
         error instanceof Error ? error.message : 'Unknown error'
       );
+
       throw error;
     }
   },

@@ -87,6 +87,13 @@ export const userProfiles = pgTable('user_profiles', {
     last_sync_hash?: string;
   }>(),
 
+  // Auto-Apply Settings (Phase 8 - Action Agent)
+  auto_apply_enabled: boolean('auto_apply_enabled').default(false).notNull(),
+  auto_apply_threshold: integer('auto_apply_threshold').default(75), // Min match score (0-100)
+  auto_apply_daily_limit: integer('auto_apply_daily_limit').default(5), // Max applications per day
+  auto_apply_excluded_companies: text('auto_apply_excluded_companies').array(), // Companies to skip
+  auto_apply_require_review: boolean('auto_apply_require_review').default(true).notNull(), // Review before sending
+
   // Timestamps
   created_at: timestamp('created_at').defaultNow().notNull(),
   updated_at: timestamp('updated_at').defaultNow().notNull(),

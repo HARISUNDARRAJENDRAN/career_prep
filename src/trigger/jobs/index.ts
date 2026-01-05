@@ -26,6 +26,7 @@ export { marketScraper, marketCleanup, dailyMarketScraper } from './market-scrap
 
 // Action Agent Jobs
 export { autoApplier, executeApply } from './auto-applier';
+export { embedResumeJob, reEmbedResumeJob } from './embed-resume';
 
 // Strategist Agent Jobs
 export { rejectionParser, trackApplication } from './rejection-parser';
