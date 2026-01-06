@@ -17,6 +17,7 @@ export * from './schema/jobs';
 
 // Sentinel + Strategist Agents Domain (Market Intelligence)
 export * from './schema/market';
+export * from './schema/strategic-insights';
 
 // Agent Orchestration Domain (Message Bus)
 export * from './schema/agent-events';

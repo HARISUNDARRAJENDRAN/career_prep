@@ -107,6 +107,74 @@ export type AgentEventUnion =
         details: Record<string, unknown>;
       };
     }
+  | {
+      type: 'ROADMAP_REPATH_REQUESTED';
+      payload: {
+        user_id: string;
+        reason: string;
+        trigger: string;
+        skill?: string;
+        occurrences?: number;
+      };
+    }
+  | {
+      type: 'CRITICAL_PATTERN_DETECTED';
+      payload: {
+        user_id: string;
+        patterns: Array<{ type: string; description: string }>;
+        health_score: number;
+      };
+    }
+  | {
+      type: 'MILESTONE_ACHIEVED';
+      payload: {
+        user_id: string;
+        milestone_type: string;
+        description: string;
+      };
+    }
+  | {
+      type: 'USER_STALLED';
+      payload: {
+        user_id: string;
+        days_inactive?: number;
+        last_velocity_score: number;
+      };
+    }
+  | {
+      type: 'PRACTICE_RECOMMENDED';
+      payload: {
+        user_id: string;
+        reason: string;
+      };
+    }
+  | {
+      type: 'REJECTION_RECEIVED';
+      payload: {
+        application_id: string;
+        user_id: string;
+        company: string;
+        role: string;
+      };
+    }
+  | {
+      type: 'MODULE_COMPLETED';
+      payload: {
+        user_id: string;
+        module_id: string;
+        roadmap_id: string;
+        module_title: string;
+      };
+    }
+  | {
+      type: 'ROADMAP_GENERATED';
+      payload: {
+        user_id: string;
+        roadmap_id: string;
+        target_role: string;
+        modules_count: number;
+      };
+    }
 
   // -------------------------------------------------------------------------
   // Action Agent Events (Job Applications)
@@ -185,6 +253,14 @@ export const EVENT_TARGET_AGENTS: Record<AgentEventType, AgentName[]> = {
   // Strategist events
   REJECTION_PARSED: ['strategist', 'architect'],
   ROADMAP_REPATH_NEEDED: ['architect'],
+  ROADMAP_REPATH_REQUESTED: ['architect'],
+  CRITICAL_PATTERN_DETECTED: ['strategist'],
+  MILESTONE_ACHIEVED: ['strategist'],
+  USER_STALLED: ['strategist'],
+  PRACTICE_RECOMMENDED: ['interviewer'],
+  REJECTION_RECEIVED: ['strategist'],
+  MODULE_COMPLETED: ['strategist', 'architect'],
+  ROADMAP_GENERATED: ['strategist'],
 
   // Action events
   AUTO_APPLY_TRIGGERED: ['action'],
@@ -203,6 +279,14 @@ export const EVENT_SOURCE_AGENTS: Record<AgentEventType, AgentName> = {
   JOB_MATCH_FOUND: 'sentinel',
   REJECTION_PARSED: 'strategist',
   ROADMAP_REPATH_NEEDED: 'strategist',
+  ROADMAP_REPATH_REQUESTED: 'strategist',
+  CRITICAL_PATTERN_DETECTED: 'strategist',
+  MILESTONE_ACHIEVED: 'strategist',
+  USER_STALLED: 'strategist',
+  PRACTICE_RECOMMENDED: 'strategist',
+  REJECTION_RECEIVED: 'action',
+  MODULE_COMPLETED: 'system',
+  ROADMAP_GENERATED: 'architect',
   AUTO_APPLY_TRIGGERED: 'action',
   APPLICATION_SUBMITTED: 'action',
 };
@@ -229,10 +313,18 @@ export const EVENT_PRIORITIES: Record<AgentEventType, number> = {
   // User-triggered, moderate urgency (Priority 7)
   ONBOARDING_COMPLETED: 7,
   AUTO_APPLY_TRIGGERED: 7,
+  MILESTONE_ACHIEVED: 7,
 
   // System-triggered, no user waiting (Priority 5)
   REJECTION_PARSED: 5,
   ROADMAP_REPATH_NEEDED: 5,
+  ROADMAP_REPATH_REQUESTED: 5,
+  CRITICAL_PATTERN_DETECTED: 5,
+  USER_STALLED: 5,
+  PRACTICE_RECOMMENDED: 5,
+  REJECTION_RECEIVED: 5,
+  MODULE_COMPLETED: 5,
+  ROADMAP_GENERATED: 5,
 
   // Background processing (Priority 3)
   JOB_MATCH_FOUND: 3,
@@ -274,6 +366,14 @@ export const EVENT_JOB_IDS: Record<AgentEventType, string> = {
   JOB_MATCH_FOUND: 'action.evaluate-match',
   REJECTION_PARSED: 'strategist.process-rejection',
   ROADMAP_REPATH_NEEDED: 'architect.repath-roadmap',
+  ROADMAP_REPATH_REQUESTED: 'architect.repath-roadmap',
+  CRITICAL_PATTERN_DETECTED: 'strategist.handle-critical-pattern',
+  MILESTONE_ACHIEVED: 'strategist.celebrate-milestone',
+  USER_STALLED: 'strategist.re-engage-user',
+  PRACTICE_RECOMMENDED: 'interviewer.schedule-practice',
+  REJECTION_RECEIVED: 'strategist.process-rejection',
+  MODULE_COMPLETED: 'strategist.track-progress',
+  ROADMAP_GENERATED: 'strategist.analyze-new-roadmap',
   AUTO_APPLY_TRIGGERED: 'action.execute-apply',
   APPLICATION_SUBMITTED: 'strategist.track-application',
 };

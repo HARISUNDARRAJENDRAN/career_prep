@@ -65,3 +65,32 @@ export {
   type ActionAgentConfig,
   type ActionResult,
 } from './action';
+
+// Strategist Agent (Strategic Oversight)
+export {
+  StrategistAgent,
+  createStrategistAgent,
+  analyzeCareerProgress,
+  STRATEGIST_PROMPTS,
+  registerStrategistTools,
+  getStrategistToolIds,
+  PatternDetector,
+  RejectionAnalyzer,
+  VelocityTracker,
+  type StrategistAgentConfig,
+  type StrategistResult,
+  type StrategistContext,
+  type StrategistOutput,
+  type PatternMatch,
+  type StrategicRecommendation,
+  type VelocityMetrics,
+  type InterventionDecision,
+  type SkillGapCluster,
+  type TrendAnalysis,
+  type MilestoneDetection,
+  type RejectionAnalysis,
+  type SkillGap,
+  type VelocityReport,
+  type VelocityTrend,
+  type PeriodMetrics,
+} from './strategist';

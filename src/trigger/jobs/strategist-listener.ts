@@ -15,17 +15,16 @@
  *
  * This job runs at LOW PRIORITY to avoid blocking primary event handlers.
  *
- * NOTE: This file uses a local stub until Trigger.dev is installed.
- * Run `npx trigger.dev@latest init` to enable real background job execution.
+ * @see docs/agentic-improvements/09-STRATEGIST_AGENT.md
  */
 
-import { task } from '@trigger.dev/sdk';
-
+import { task, schedules } from '@trigger.dev/sdk';
 import { db } from '@/drizzle/db';
 import {
-  interviews,
-  userSkills,
-  jobApplications,
+  strategicInsights,
+  velocityMetrics,
+  patternHistory,
+  interventionLog,
 } from '@/drizzle/schema';
 import { eq, desc, and, gte, sql } from 'drizzle-orm';
 import {
@@ -35,17 +34,38 @@ import {
   publishAgentEvent,
 } from '@/lib/agents/message-bus';
 import type { AgentEventType } from '@/lib/agents/events';
+import {
+  createStrategistAgent,
+  processStrategicEvent,
+  type StrategistOutput,
+} from '@/lib/agents/agents/strategist';
 
 interface GlobalListenerPayload {
   event_id: string;
   event_type: AgentEventType;
   user_id: string;
+  payload?: Record<string, unknown>;
 }
 
+// =============================================================================
+// Event-Driven Listener (Primary)
+// =============================================================================
+
+/**
+ * Main event listener for the Strategist Agent
+ * Processes events from the message bus and runs strategic analysis
+ */
 export const strategistGlobalListener = task({
   id: 'strategist.global-listener',
+  retry: {
+    maxAttempts: 3,
+    factor: 1.5,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 10000,
+  },
   run: async (payload: GlobalListenerPayload) => {
-    const { event_id, event_type, user_id } = payload;
+    const { event_id, event_type, user_id, payload: eventPayload } = payload;
+    const startTime = Date.now();
 
     // =========================================================================
     // IDEMPOTENCY CHECK
@@ -65,34 +85,58 @@ export const strategistGlobalListener = task({
       console.log(`  User ID: ${user_id}`);
 
       // =========================================================================
-      // Pattern Detection Based on Event Type
+      // Determine if this event warrants full strategic analysis
       // =========================================================================
-      switch (event_type) {
-        case 'INTERVIEW_COMPLETED':
-          await checkInterviewPatterns(user_id);
-          break;
+      const significantEvents: AgentEventType[] = [
+        'INTERVIEW_COMPLETED',
+        'REJECTION_PARSED',
+        'REJECTION_RECEIVED',
+        'SKILL_VERIFIED',
+        'APPLICATION_SUBMITTED',
+        'MODULE_COMPLETED',
+        'MARKET_UPDATE',
+        'JOB_MATCH_FOUND',
+        'ROADMAP_GENERATED',
+      ];
 
-        case 'REJECTION_PARSED':
-          await checkRejectionPatterns(user_id);
-          break;
+      const isSignificant = significantEvents.includes(event_type);
 
-        case 'SKILL_VERIFIED':
-          await checkProgressMilestones(user_id);
-          break;
+      if (isSignificant) {
+        // Run full strategic analysis
+        const result = await processStrategicEvent(
+          user_id,
+          event_type,
+          eventPayload || {}
+        );
 
-        case 'APPLICATION_SUBMITTED':
-          await trackApplicationVelocity(user_id);
-          break;
+        if (result.success && result.output) {
+          // Persist strategic insight
+          await persistStrategicInsight(user_id, event_type, {
+            output: result.output,
+            duration_ms: result.duration_ms,
+            confidence: result.confidence,
+          });
 
-        case 'ONBOARDING_COMPLETED':
-          await recordOnboardingCompletion(user_id);
-          break;
+          // Persist detected patterns
+          await persistPatterns(user_id, result.output.patterns);
 
-        default:
-          console.log(`[Strategist] No pattern check for ${event_type}`);
+          // Log interventions
+          await logInterventions(user_id, result.output.interventions);
+
+          console.log(
+            `[Strategist] Analysis complete - Health: ${result.output.overall_health} (${result.output.health_score}/100)`
+          );
+        } else {
+          console.warn(
+            `[Strategist] Analysis failed: ${result.reasoning_trace.slice(-1)[0] || 'Unknown'}`
+          );
+        }
+      } else {
+        // Lightweight event logging for non-significant events
+        console.log(`[Strategist] Event ${event_type} logged (no full analysis)`);
       }
 
-      // Mark as completed (this is for the global listener's own event tracking)
+      // Mark as completed
       await markEventCompleted(event_id);
 
       return {
@@ -100,6 +144,8 @@ export const strategistGlobalListener = task({
         processed: true,
         event_type,
         user_id,
+        duration_ms: Date.now() - startTime,
+        full_analysis: isSignificant,
       };
     } catch (error) {
       console.error('[Strategist Global Listener] Error:', error);
@@ -113,186 +159,305 @@ export const strategistGlobalListener = task({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+        duration_ms: Date.now() - startTime,
       };
     }
   },
 });
 
 // =============================================================================
-// Pattern Detection Functions
+// Scheduled Jobs
 // =============================================================================
 
 /**
- * Detect if user is struggling with interviews
- *
- * Triggers intervention if:
- * - 3+ consecutive low scores
- * - Declining trend in scores
+ * Daily strategic health check for all active users
+ * Runs at 8 AM UTC to catch stalled users and generate daily insights
  */
-async function checkInterviewPatterns(userId: string): Promise<void> {
-  try {
-    // Get last 5 interviews
-    const recentInterviews = await db.query.interviews.findMany({
-      where: eq(interviews.user_id, userId),
-      orderBy: [desc(interviews.created_at)],
-      limit: 5,
-    });
+export const dailyStrategicHealthCheck = schedules.task({
+  id: 'strategist.daily-health-check',
+  cron: '0 8 * * *', // 8 AM UTC daily
+  run: async (payload) => {
+    console.log('[Strategist] Running daily health check at:', payload.timestamp);
 
-    if (recentInterviews.length < 3) {
-      console.log('[Strategist] Not enough interviews for pattern detection');
-      return;
+    try {
+      // Get users with recent activity (last 30 days)
+      const activeUserIds = await getActiveUserIds(30);
+      console.log(`[Strategist] Checking ${activeUserIds.length} active users`);
+
+      const results = {
+        processed: 0,
+        stalled: 0,
+        concerning: 0,
+        healthy: 0,
+        errors: 0,
+      };
+
+      for (const userId of activeUserIds) {
+        try {
+          const agent = createStrategistAgent(crypto.randomUUID());
+          const result = await agent.analyzeCareerProgress({
+            task_id: crypto.randomUUID(),
+            user_id: userId,
+            trigger_event: 'daily_health_check',
+            include_recommendations: true,
+            include_interventions: true,
+          });
+
+          if (result.success && result.output) {
+            results.processed++;
+
+            if (result.output.velocity.is_stalled) {
+              results.stalled++;
+            }
+            if (result.output.overall_health === 'concerning') {
+              results.concerning++;
+            }
+            if (
+              result.output.overall_health === 'excellent' ||
+              result.output.overall_health === 'good'
+            ) {
+              results.healthy++;
+            }
+
+            // Persist the daily insight
+            await persistStrategicInsight(userId, 'daily_health_check', {
+              output: result.output,
+              duration_ms: result.duration_ms,
+              confidence: result.confidence,
+            });
+          }
+        } catch (error) {
+          console.error(`[Strategist] Error processing user ${userId}:`, error);
+          results.errors++;
+        }
+      }
+
+      console.log('[Strategist] Daily health check complete:', results);
+
+      return {
+        success: true,
+        results,
+        next_run: payload.upcoming[0],
+      };
+    } catch (error) {
+      console.error('[Strategist] Daily health check failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
+  },
+});
 
-    // Check for concerning patterns
-    // Note: raw_data.overall_score will be populated when Hume AI is integrated
-    const lowScoreCount = recentInterviews.filter((interview) => {
-      const score = (interview.raw_data as { overall_score?: number })
-        ?.overall_score;
-      return score !== undefined && score < 50;
-    }).length;
+/**
+ * Weekly velocity metrics snapshot
+ * Runs every Monday at 6 AM UTC
+ */
+export const weeklyVelocitySnapshot = schedules.task({
+  id: 'strategist.weekly-velocity-snapshot',
+  cron: '0 6 * * 1', // 6 AM UTC every Monday
+  run: async (payload) => {
+    console.log('[Strategist] Running weekly velocity snapshot at:', payload.timestamp);
 
-    if (lowScoreCount >= 3) {
-      console.log(
-        `[Strategist] User ${userId} has ${lowScoreCount} low-scoring interviews`
-      );
+    try {
+      const activeUserIds = await getActiveUserIds(7);
+      console.log(`[Strategist] Snapshotting velocity for ${activeUserIds.length} users`);
 
-      // Trigger roadmap repath to focus on fundamentals
-      await publishAgentEvent({
-        type: 'ROADMAP_REPATH_NEEDED',
-        payload: {
-          user_id: userId,
-          reason: 'interview_performance',
-          details: {
-            trigger: 'consecutive_low_interview_scores',
-            low_score_count: lowScoreCount,
-            recommendation: 'focus_on_fundamentals',
-          },
-        },
+      const periodEnd = new Date();
+      const periodStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      let processed = 0;
+
+      for (const userId of activeUserIds) {
+        try {
+          const { VelocityTracker } = await import(
+            '@/lib/agents/agents/strategist/velocity-tracker'
+          );
+          const tracker = new VelocityTracker(userId, 7);
+          const report = await tracker.generateReport();
+
+          // Persist velocity metric
+          await db.insert(velocityMetrics).values({
+            user_id: userId,
+            period_start: periodStart,
+            period_end: periodEnd,
+            period_days: 7,
+            applications_count: report.current_period.applications_count,
+            interviews_count: report.current_period.interviews_count,
+            responses_received: report.current_period.responses_received,
+            rejections_count: report.current_period.rejections_count,
+            offers_count: report.current_period.offers_count,
+            modules_completed: report.current_period.modules_completed,
+            skills_verified: report.current_period.skills_verified,
+            response_rate: String(report.current_period.response_rate),
+            pass_rate: String(report.current_period.pass_rate),
+            velocity_score: report.velocity_score,
+            velocity_level: report.overall_velocity,
+            raw_data: {
+              trends: report.trends,
+              recommendations: report.recommendations,
+              previous_period: report.previous_period
+                ? {
+                    applications_count: report.previous_period.applications_count,
+                    interviews_count: report.previous_period.interviews_count,
+                    modules_completed: report.previous_period.modules_completed,
+                  }
+                : undefined,
+            },
+          });
+
+          processed++;
+        } catch (error) {
+          console.error(`[Strategist] Error snapshotting velocity for ${userId}:`, error);
+        }
+      }
+
+      console.log(`[Strategist] Weekly velocity snapshot complete: ${processed} users`);
+
+      return {
+        success: true,
+        users_processed: processed,
+        period: { start: periodStart, end: periodEnd },
+        next_run: payload.upcoming[0],
+      };
+    } catch (error) {
+      console.error('[Strategist] Weekly velocity snapshot failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  },
+});
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Get user IDs with activity in the last N days
+ */
+async function getActiveUserIds(days: number): Promise<string[]> {
+  const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Get users with recent job applications or interviews
+  const result = await db.execute(sql`
+    SELECT DISTINCT user_id
+    FROM (
+      SELECT user_id FROM job_applications WHERE created_at >= ${cutoffDate}
+      UNION
+      SELECT user_id FROM interviews WHERE created_at >= ${cutoffDate}
+      UNION
+      SELECT user_id FROM user_skills WHERE updated_at >= ${cutoffDate}
+    ) AS active_users
+    LIMIT 1000
+  `);
+
+  return (result.rows as { user_id: string }[]).map((r) => r.user_id);
+}
+
+/**
+ * Persist strategic insight to database
+ */
+async function persistStrategicInsight(
+  userId: string,
+  triggerEvent: string,
+  result: {
+    output: StrategistOutput;
+    duration_ms: number;
+    confidence: number;
+  }
+): Promise<void> {
+  try {
+    await db.insert(strategicInsights).values({
+      user_id: userId,
+      health_score: result.output.health_score,
+      overall_health: result.output.overall_health,
+      velocity_score: result.output.velocity.score,
+      velocity_level: result.output.velocity.overall,
+      is_stalled: result.output.velocity.is_stalled,
+      days_inactive: result.output.velocity.days_inactive,
+      executive_summary: result.output.executive_summary,
+      raw_data: {
+        patterns: result.output.patterns.map((p) => ({
+          type: p.type,
+          severity: p.severity,
+          description: p.description,
+          recommended_action: p.recommended_action,
+        })),
+        velocity_trends: result.output.velocity.trends,
+        recommendations: result.output.recommendations,
+        interventions: result.output.interventions,
+        strengths: [],
+        improvement_areas: [],
+      },
+      trigger_event: triggerEvent,
+      analysis_duration_ms: result.duration_ms,
+      confidence_score: String(result.confidence),
+    });
+  } catch (error) {
+    console.error('[Strategist] Error persisting insight:', error);
+  }
+}
+
+/**
+ * Persist detected patterns to history
+ */
+async function persistPatterns(
+  userId: string,
+  patterns: Array<{
+    type: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    description: string;
+    recommended_action?: string;
+    data?: unknown;
+  }>
+): Promise<void> {
+  try {
+    for (const pattern of patterns) {
+      // Skip milestones - they're one-time celebrations
+      if (pattern.type === 'milestone') continue;
+
+      await db.insert(patternHistory).values({
+        user_id: userId,
+        pattern_type: pattern.type as 'skill_gap_cluster' | 'declining_trend' | 'milestone' | 'stall' | 'velocity_drop',
+        severity: pattern.severity,
+        description: pattern.description,
+        recommended_action: pattern.recommended_action,
+        raw_data: pattern.data as Record<string, unknown>,
       });
     }
   } catch (error) {
-    console.error('[Strategist] Error checking interview patterns:', error);
+    console.error('[Strategist] Error persisting patterns:', error);
   }
 }
 
 /**
- * Detect rejection patterns for strategic intervention
- *
- * Identifies skills that are repeatedly mentioned in rejections
- * and triggers focused improvement
+ * Log triggered interventions
  */
-async function checkRejectionPatterns(userId: string): Promise<void> {
+async function logInterventions(
+  userId: string,
+  interventions: Array<{
+    action: string;
+    reason: string;
+    urgency: string;
+    payload?: Record<string, unknown>;
+  }>
+): Promise<void> {
   try {
-    // Get applications with rejection feedback from last 30 days
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    for (const intervention of interventions) {
+      if (intervention.action === 'NO_ACTION') continue;
 
-    const recentApplications = await db.query.jobApplications.findMany({
-      where: and(
-        eq(jobApplications.user_id, userId),
-        eq(jobApplications.status, 'rejected'),
-        gte(jobApplications.created_at, thirtyDaysAgo)
-      ),
-    });
-
-    if (recentApplications.length < 3) {
-      console.log('[Strategist] Not enough rejections for pattern detection');
-      return;
-    }
-
-    // Track rejection frequency
-    console.log(
-      `[Strategist] User ${userId} has ${recentApplications.length} rejections in last 30 days`
-    );
-
-    // TODO: When application_feedback is populated, aggregate gap analysis
-    // For now, just log the pattern
-  } catch (error) {
-    console.error('[Strategist] Error checking rejection patterns:', error);
-  }
-}
-
-/**
- * Celebrate progress milestones
- *
- * Recognizes when users hit skill verification milestones
- */
-async function checkProgressMilestones(userId: string): Promise<void> {
-  try {
-    // Count verified skills
-    const verifiedCount = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(userSkills)
-      .where(
-        and(
-          eq(userSkills.user_id, userId),
-          sql`(verification_metadata->>'is_verified')::boolean = true`
-        )
-      );
-
-    const count = verifiedCount[0]?.count || 0;
-
-    // Milestone thresholds
-    const milestones = [5, 10, 25, 50, 100];
-
-    if (milestones.includes(count)) {
-      console.log(
-        `[Strategist] User ${userId} reached ${count} verified skills milestone!`
-      );
-
-      // TODO: Trigger celebration notification
-      // await sendNotification(userId, {
-      //   type: 'milestone',
-      //   title: `${count} Skills Verified!`,
-      //   message: `Congratulations! You've verified ${count} skills through interviews.`,
-      // });
+      await db.insert(interventionLog).values({
+        user_id: userId,
+        action: intervention.action as 'REPATH_ROADMAP' | 'NOTIFY_USER' | 'ADJUST_STRATEGY' | 'REQUEST_PRACTICE' | 'CELEBRATE' | 'NO_ACTION',
+        urgency: intervention.urgency as 'immediate' | 'soon' | 'when_convenient',
+        reason: intervention.reason,
+        payload: intervention.payload,
+        executed: intervention.urgency === 'immediate', // Immediate interventions are executed by the agent
+      });
     }
   } catch (error) {
-    console.error('[Strategist] Error checking progress milestones:', error);
+    console.error('[Strategist] Error logging interventions:', error);
   }
-}
-
-/**
- * Track application submission velocity
- *
- * Monitors how actively users are applying to jobs
- */
-async function trackApplicationVelocity(userId: string): Promise<void> {
-  try {
-    // Get applications from last 7 days
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    const weeklyApplications = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(jobApplications)
-      .where(
-        and(
-          eq(jobApplications.user_id, userId),
-          gte(jobApplications.created_at, sevenDaysAgo)
-        )
-      );
-
-    const count = weeklyApplications[0]?.count || 0;
-
-    console.log(
-      `[Strategist] User ${userId} submitted ${count} applications this week`
-    );
-
-    // TODO: Store velocity metric for trend analysis
-    // TODO: Alert if velocity drops significantly
-  } catch (error) {
-    console.error('[Strategist] Error tracking application velocity:', error);
-  }
-}
-
-/**
- * Record onboarding completion for analytics
- */
-async function recordOnboardingCompletion(userId: string): Promise<void> {
-  console.log(`[Strategist] User ${userId} completed onboarding`);
-
-  // TODO: Record onboarding analytics
-  // - Time to complete
-  // - Steps completed vs skipped
-  // - Skills claimed
-  // - Target roles selected
 }
