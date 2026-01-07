@@ -841,7 +841,7 @@ const submitApplicationTool: ToolDefinition<
       return {
         status: result.status,
         message: result.message,
-        screenshot_url: result.screenshot_url,
+        screenshot_url: result.screenshot_url ?? undefined, // Convert null to undefined
         fields_filled: result.fields_filled,
         fields_missing: result.fields_missing,
       };

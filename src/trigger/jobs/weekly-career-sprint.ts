@@ -223,8 +223,8 @@ export const weeklyRejectionAnalysis = schedules.task({
         reports.push({
           user_id: userId,
           rejections: report.total_rejections,
-          patterns: report.patterns.length,
-          skill_gaps: report.top_skill_gaps.length,
+          patterns: report.common_reasons.length,
+          skill_gaps: report.skill_gaps.length,
         });
       } catch (error) {
         console.error(`[Rejection Analysis] Error for user ${userId}:`, error);
@@ -295,17 +295,17 @@ async function runUserSprint(user_id: string): Promise<SprintResult> {
     // Issue strategic directive based on analysis
     let directivesIssued = 0;
 
-    if (rejectionReport.top_skill_gaps.length >= 2) {
+    if (rejectionReport.skill_gaps.length >= 2) {
       const directive = await issueDirective({
         user_id,
         type: 'skill_priority',
         priority: 'medium',
         title: 'Sprint Focus: Skill Development',
-        description: `Based on rejection analysis, prioritize these skills: ${rejectionReport.top_skill_gaps.slice(0, 3).map((g) => g.skill).join(', ')}`,
+        description: `Based on rejection analysis, prioritize these skills: ${rejectionReport.skill_gaps.slice(0, 3).map((g) => g.skill).join(', ')}`,
         reasoning: 'Recurring skill gaps detected in recent rejections',
         target_agent: 'architect',
         action_required: 'Repath roadmap to include these skills',
-        context: { skill_gaps: rejectionReport.top_skill_gaps },
+        context: { skill_gaps: rejectionReport.skill_gaps },
       });
 
       // Broadcast directive issued
@@ -346,7 +346,7 @@ async function runUserSprint(user_id: string): Promise<SprintResult> {
       success: true,
       directives_issued: directivesIssued,
       health_score: healthScore,
-      patterns_detected: rejectionReport.patterns.length,
+      patterns_detected: rejectionReport.common_reasons.length,
     };
 
     broadcastSprintProgress(user_id, 'Strategist Analysis', 50, `Analysis complete. Health score: ${healthScore}%`);
@@ -366,19 +366,19 @@ async function runUserSprint(user_id: string): Promise<SprintResult> {
     let resumeUpdated = false;
     const tailoringApplied: string[] = [];
 
-    if (activeDirectives.length > 0 || rejectionReport.top_skill_gaps.length > 0) {
+    if (activeDirectives.length > 0 || rejectionReport.skill_gaps.length > 0) {
       // Publish event for Resume Agent to handle
       await publishAgentEvent({
         type: 'RESUME_UPDATE_REQUESTED',
         payload: {
           user_id,
           reason: 'weekly_sprint',
-          priority_skills: rejectionReport.top_skill_gaps.map((g) => g.skill),
+          priority_skills: rejectionReport.skill_gaps.map((g) => g.skill),
           directive_ids: activeDirectives.map((d) => d.id),
         },
       });
 
-      tailoringApplied.push(...rejectionReport.top_skill_gaps.slice(0, 3).map((g) => g.skill));
+      tailoringApplied.push(...rejectionReport.skill_gaps.slice(0, 3).map((g) => g.skill));
       resumeUpdated = true;
       broadcastSprintProgress(user_id, 'Resume Tailoring', 65, `Resume updated with skills: ${tailoringApplied.join(', ')}`);
     } else {
@@ -640,7 +640,7 @@ async function findMatchingJobs(
  */
 function calculateHealthScore(
   ghostingReport: { average_hope_score: number; ghosted_applications: unknown[] },
-  rejectionReport: { rejection_rate: number; patterns: unknown[] }
+  rejectionReport: { rejection_rate?: number; common_reasons: unknown[] }
 ): number {
   let score = 100;
 
@@ -653,12 +653,12 @@ function calculateHealthScore(
   score -= ghostingReport.ghosted_applications.length * 3;
 
   // Deduct for high rejection rate
-  if (rejectionReport.rejection_rate > 50) {
+  if (rejectionReport.rejection_rate && rejectionReport.rejection_rate > 50) {
     score -= (rejectionReport.rejection_rate - 50) / 2;
   }
 
   // Deduct for patterns
-  score -= rejectionReport.patterns.length * 5;
+  score -= rejectionReport.common_reasons.length * 5;
 
   return Math.max(0, Math.min(100, score));
 }

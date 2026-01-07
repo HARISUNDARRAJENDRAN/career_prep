@@ -44,6 +44,7 @@ export const platformEnum = pgEnum('credential_platform', [
   'greenhouse',
   'lever',
   'workday',
+  'gmail', // Email monitoring
   'other',
 ]);
 

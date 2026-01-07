@@ -26,6 +26,8 @@ import {
   XCircle,
   Sparkles,
 } from 'lucide-react';
+import { AutoApplyButton } from './auto-apply-button';
+import { ManualApplyButton } from './manual-apply-button';
 
 interface Job {
   id: string;
@@ -347,18 +349,32 @@ export function JobListings() {
                       {new Date(job.scraped_at).toLocaleDateString()}
                     </span>
                   </div>
-                  {job.raw_data?.application_url && (
-                    <Button size="sm" asChild>
-                      <a
-                        href={job.raw_data.application_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Apply
-                        <ExternalLink className="ml-2 h-4 w-4" />
-                      </a>
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <AutoApplyButton
+                      jobListingId={job.id}
+                      company={job.company}
+                      role={job.title}
+                      size="sm"
+                    />
+                    <ManualApplyButton
+                      jobListingId={job.id}
+                      company={job.company}
+                      role={job.title}
+                      size="sm"
+                    />
+                    {job.raw_data?.application_url && (
+                      <Button size="sm" variant="outline" asChild>
+                        <a
+                          href={job.raw_data.application_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          View Job
+                          <ExternalLink className="ml-2 h-4 w-4" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

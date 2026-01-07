@@ -13,6 +13,7 @@ import {
   Star,
   Edit,
   Trash2,
+  Eye,
 } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,6 +43,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { ApplicationScreenshot } from './application-screenshot';
 
 interface ApprovalQueueProps {
   userId: string;
@@ -58,6 +60,16 @@ interface DraftApplication {
   agent_reasoning?: string;
   resume_version?: string;
   cover_letter_preview?: string;
+  raw_data?: {
+    automation?: {
+      status?: 'success' | 'draft' | 'failed' | 'pending';
+      screenshot_url?: string;
+      fields_filled?: number;
+      fields_missing?: string[];
+      message?: string;
+      submitted_at?: string;
+    };
+  };
 }
 
 export function ApprovalQueue({ userId }: ApprovalQueueProps) {
@@ -243,6 +255,21 @@ export function ApprovalQueue({ userId }: ApprovalQueueProps) {
                   </div>
 
                   <div className="flex items-center gap-2 ml-4">
+                    {/* Screenshot proof viewer */}
+                    {draft.raw_data?.automation?.screenshot_url && (
+                      <ApplicationScreenshot
+                        applicationId={draft.id}
+                        company={draft.company}
+                        role={draft.role}
+                        screenshotUrl={draft.raw_data.automation.screenshot_url}
+                        status={draft.raw_data.automation.status || 'draft'}
+                        fieldsFilled={draft.raw_data.automation.fields_filled}
+                        fieldsMissing={draft.raw_data.automation.fields_missing}
+                        message={draft.raw_data.automation.message}
+                        submittedAt={draft.raw_data.automation.submitted_at}
+                      />
+                    )}
+
                     {draft.job_url && (
                       <Button variant="ghost" size="icon" asChild>
                         <a href={draft.job_url} target="_blank" rel="noopener noreferrer">

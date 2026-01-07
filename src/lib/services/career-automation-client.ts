@@ -141,15 +141,15 @@ export const ApplicationStatusSchema = z.enum([
 export const ApplicationResultSchema = z.object({
   status: ApplicationStatusSchema,
   job_url: z.string(),
-  company: z.string().optional(),
-  job_title: z.string().optional(),
-  screenshot_path: z.string().optional(),
-  screenshot_url: z.string().optional(),
+  company: z.string().nullish(), // Python may return null
+  job_title: z.string().nullish(), // Python may return null
+  screenshot_path: z.string().nullish(),
+  screenshot_url: z.string().nullish(),
   message: z.string(),
-  timestamp: z.string().optional(),
+  timestamp: z.string().nullish(),
   fields_filled: z.number().default(0),
   fields_missing: z.array(z.string()).default([]),
-  application_id: z.string().optional(),
+  application_id: z.string().nullish(), // Python may return null
 });
 
 // Job Search

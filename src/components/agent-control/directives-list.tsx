@@ -76,6 +76,21 @@ export function DirectivesList({ userId }: DirectivesListProps) {
     },
   });
 
+  const completeMutation = useMutation({
+    mutationFn: async (directiveId: string) => {
+      const res = await fetch(`/api/agents/directives/${directiveId}/complete`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to complete directive');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['directives'] });
+      queryClient.invalidateQueries({ queryKey: ['agent-control-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['blocking-directives'] });
+    },
+  });
+
   const getTypeIcon = (type: string) => {
     switch (type) {
       case 'skill_priority':
@@ -220,15 +235,27 @@ export function DirectivesList({ userId }: DirectivesListProps) {
                                 </p>
                               </div>
                             </div>
-                            {directive.status === 'pending' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => cancelMutation.mutate(directive.id)}
-                                disabled={cancelMutation.isPending}
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </Button>
+                            {['pending', 'active'].includes(directive.status) && (
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() => completeMutation.mutate(directive.id)}
+                                  disabled={completeMutation.isPending}
+                                  className="bg-green-600 hover:bg-green-700"
+                                >
+                                  <CheckCircle2 className="h-4 w-4 mr-1" />
+                                  Complete
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => cancelMutation.mutate(directive.id)}
+                                  disabled={cancelMutation.isPending}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </div>
                             )}
                           </div>
 

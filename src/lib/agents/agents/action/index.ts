@@ -14,3 +14,11 @@ export {
 
 export { registerActionTools, getActionToolIds } from './action-tools';
 export { ACTION_PROMPTS } from './action-prompts';
+
+// Tool executor for direct invocation
+export {
+  executeActionTool,
+  executeActionToolSequence,
+  isToolAvailable,
+  getToolInfo,
+} from './executor';

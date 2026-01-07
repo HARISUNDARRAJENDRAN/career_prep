@@ -32,6 +32,7 @@ import {
   type RecentInterviewData,
   type WeeklyGoal,
 } from '@/components/dashboard';
+import { DirectiveBanner } from '@/components/dashboard/directive-banner';
 
 export default async function DashboardPage() {
   const user = await currentUser();
@@ -188,6 +189,9 @@ export default async function DashboardPage() {
           </p>
         </div>
       </AnimatedSection>
+
+      {/* Strategic Directive Banner - Shows when blocking directives are active */}
+      <DirectiveBanner />
 
       {/* Quick Actions */}
       <QuickActions

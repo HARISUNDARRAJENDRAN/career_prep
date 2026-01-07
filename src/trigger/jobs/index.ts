@@ -74,3 +74,6 @@ export {
   dailyGhostingCheck,
   weeklyRejectionAnalysis,
 } from './weekly-career-sprint';
+
+// Email Monitoring (Phase 2)
+export { emailMonitoringTask } from './email-monitoring';

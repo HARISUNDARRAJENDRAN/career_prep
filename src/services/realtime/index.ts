@@ -12,8 +12,11 @@ export type AgentEventType =
   | 'sprint_complete'
   | 'directive_issued'
   | 'directive_completed'
+  | 'directive_dismissed'
   | 'application_submitted'
   | 'application_draft_created'
+  | 'application_blocked_by_directive'
+  | 'application_progress'
   | 'ghosting_detected'
   | 'rejection_analyzed'
   | 'approval_needed'
@@ -214,5 +217,63 @@ export function broadcastAgentStatus(
     type: 'agent_status_changed',
     user_id: userId,
     data: { agent_id: agentId, status, message },
+  });
+}
+
+/**
+ * Broadcast when an application is blocked by a directive
+ */
+export function broadcastApplicationBlocked(
+  userId: string,
+  data: {
+    directive_id: string;
+    directive_title: string;
+    directive_type: string;
+    reason: string;
+    action_required?: string;
+    job_company: string;
+    job_role: string;
+  }
+): void {
+  broadcastToUser({
+    type: 'application_blocked_by_directive',
+    user_id: userId,
+    data,
+  });
+}
+
+/**
+ * Broadcast application progress during browser automation
+ */
+export function broadcastApplicationProgress(
+  userId: string,
+  data: {
+    applicationId: string;
+    stage: 'navigating' | 'detecting_form' | 'filling' | 'uploading_resume' | 'submitting' | 'complete';
+    progress: number;
+    message: string;
+    company: string;
+    role: string;
+  }
+): void {
+  broadcastToUser({
+    type: 'application_progress',
+    user_id: userId,
+    data,
+  });
+}
+
+/**
+ * Broadcast when a directive is dismissed
+ */
+export function broadcastDirectiveDismissed(
+  userId: string,
+  directiveId: string,
+  directiveTitle: string
+): void {
+  broadcastToUser({
+    type: 'directive_dismissed',
+    user_id: userId,
+    data: { directive_id: directiveId, title: directiveTitle },
   });
 }

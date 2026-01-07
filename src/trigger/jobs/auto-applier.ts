@@ -13,9 +13,11 @@
  * 2. Validate match score against user's threshold
  * 3. Check daily application limit
  * 4. Check excluded companies list
- * 5. Generate tailored cover letter using AI + RAG
- * 6. Create job_applications record
- * 7. Publish APPLICATION_SUBMITTED event
+ * 5. Check for blocking strategic directives
+ * 6. Generate tailored cover letter using AI + RAG
+ * 7. Create job_applications record
+ * 8. Optionally submit via browser automation
+ * 9. Publish APPLICATION_SUBMITTED event
  */
 
 import { task } from '@trigger.dev/sdk';
@@ -35,6 +37,14 @@ import {
   markEventProcessing,
   publishAgentEvent,
 } from '@/lib/agents/message-bus';
+import { createNotification } from '@/services/notifications';
+import { checkDirectivesForOperation } from '@/lib/agents/utils/directive-checker';
+import {
+  broadcastApplicationBlocked,
+  broadcastApplicationProgress,
+  broadcastToUser,
+} from '@/services/realtime';
+import { executeActionTool } from '@/lib/agents/agents/action';
 
 interface AutoApplierPayload {
   event_id: string;
@@ -246,6 +256,59 @@ export const autoApplier = task({
       }
 
       // =========================================================================
+      // Step 7.5: Check for blocking strategic directives
+      // =========================================================================
+      console.log('[Auto Applier] Checking strategic directives...');
+
+      const directiveCheck = await checkDirectivesForOperation({
+        userId: user_id,
+        agentType: 'action',
+        operation: 'apply',
+      });
+
+      if (directiveCheck.blocked && directiveCheck.directive) {
+        console.log(`[Auto Applier] BLOCKED by directive: ${directiveCheck.directive.title}`);
+
+        // Broadcast to UI that application was blocked
+        broadcastApplicationBlocked(user_id, {
+          directive_id: directiveCheck.directive.id,
+          directive_title: directiveCheck.directive.title,
+          directive_type: directiveCheck.directive.type,
+          reason: directiveCheck.reason || directiveCheck.directive.description,
+          action_required: directiveCheck.requiredAction,
+          job_company: jobListing.company,
+          job_role: jobListing.title,
+        });
+
+        // Create notification for user
+        await createNotification({
+          user_id,
+          type: 'system',
+          priority: 'high',
+          title: `Application Blocked: ${jobListing.company}`,
+          message: `Strategic directive "${directiveCheck.directive.title}" is active. ${directiveCheck.directive.description}`,
+          action_url: '/dashboard/agent-requests?tab=directives',
+          action_label: 'View Directive',
+          metadata: {
+            directive_id: directiveCheck.directive.id,
+            blocked_job_id: job_listing_id,
+          },
+        });
+
+        await markEventCompleted(event_id);
+
+        return {
+          success: true,
+          applied: false,
+          reason: 'blocked_by_directive',
+          directive_id: directiveCheck.directive.id,
+          directive_title: directiveCheck.directive.title,
+          user_id,
+          job_listing_id,
+        };
+      }
+
+      // =========================================================================
       // Step 8: Generate personalized cover letter
       // =========================================================================
       console.log('[Auto Applier] Generating cover letter...');
@@ -314,6 +377,125 @@ export const autoApplier = task({
       );
 
       // =========================================================================
+      // Step 10.5: Optionally auto-submit via browser automation
+      // =========================================================================
+      let browserAutomationResult: {
+        status: string;
+        screenshot_url?: string;
+        fields_filled?: number;
+        message?: string;
+      } | null = null;
+
+      if (!userProfile.auto_apply_require_review) {
+        console.log('[Auto Applier] Attempting browser automation submission...');
+
+        // Broadcast that we're starting automation
+        broadcastApplicationProgress(user_id, {
+          applicationId: application.id,
+          stage: 'navigating',
+          progress: 10,
+          message: 'Starting browser automation...',
+          company: jobListing.company,
+          role: jobListing.title,
+        });
+
+        try {
+          const submissionResult = await executeActionTool<{
+            status: string;
+            message: string;
+            screenshot_url?: string;
+            fields_filled: number;
+            fields_missing: string[];
+          }>('submit_application', {
+            user_id,
+            job_listing_id,
+            application_id: application.id,
+            cover_letter: coverLetterResult.coverLetter,
+            dry_run: false,
+          });
+
+          browserAutomationResult = {
+            status: submissionResult.status,
+            screenshot_url: submissionResult.screenshot_url,
+            fields_filled: submissionResult.fields_filled,
+            message: submissionResult.message,
+          };
+
+          if (submissionResult.status === 'success') {
+            // Update application status to applied
+            await db.update(jobApplications)
+              .set({
+                status: 'applied',
+                applied_at: new Date(),
+                last_activity_at: new Date(),
+                raw_data: sql`COALESCE(raw_data, '{}'::jsonb) || ${JSON.stringify({
+                  automation: {
+                    status: 'success',
+                    screenshot_url: submissionResult.screenshot_url,
+                    fields_filled: submissionResult.fields_filled,
+                    submitted_at: new Date().toISOString(),
+                  },
+                })}::jsonb`,
+              })
+              .where(eq(jobApplications.id, application.id));
+
+            // Broadcast success
+            broadcastToUser({
+              type: 'application_submitted',
+              user_id,
+              data: {
+                status: 'success',
+                application_id: application.id,
+                screenshot_url: submissionResult.screenshot_url,
+                company: jobListing.company,
+                role: jobListing.title,
+              },
+            });
+
+            console.log('[Auto Applier] Browser automation successful');
+          } else {
+            // Fallback to draft - browser automation couldn't complete
+            await db.update(jobApplications)
+              .set({
+                status: 'draft',
+                raw_data: sql`COALESCE(raw_data, '{}'::jsonb) || ${JSON.stringify({
+                  automation: {
+                    status: submissionResult.status,
+                    message: submissionResult.message,
+                    screenshot_url: submissionResult.screenshot_url,
+                    fields_missing: submissionResult.fields_missing,
+                    attempted_at: new Date().toISOString(),
+                  },
+                })}::jsonb`,
+              })
+              .where(eq(jobApplications.id, application.id));
+
+            // Broadcast that it's now a draft
+            broadcastToUser({
+              type: 'application_draft_created',
+              user_id,
+              data: {
+                status: 'draft',
+                application_id: application.id,
+                reason: submissionResult.message,
+                company: jobListing.company,
+                role: jobListing.title,
+              },
+            });
+
+            console.log(`[Auto Applier] Browser automation fallback to draft: ${submissionResult.message}`);
+          }
+        } catch (error) {
+          console.error('[Auto Applier] Browser automation failed:', error);
+          // Application remains as draft - don't fail the whole job
+          browserAutomationResult = {
+            status: 'failed',
+            message: error instanceof Error ? error.message : 'Unknown error',
+          };
+        }
+      }
+
+      // =========================================================================
       // Step 11: Publish APPLICATION_SUBMITTED event
       // =========================================================================
       if (applicationStatus === 'applied') {
@@ -343,8 +525,8 @@ export const autoApplier = task({
 
       return {
         success: true,
-        applied: applicationStatus === 'applied',
-        requires_review: applicationStatus === 'draft',
+        applied: applicationStatus === 'applied' || browserAutomationResult?.status === 'success',
+        requires_review: applicationStatus === 'draft' && browserAutomationResult?.status !== 'success',
         application_id: application.id,
         cover_letter_id: coverLetterDoc.id,
         company: jobListing.company,
@@ -353,6 +535,12 @@ export const autoApplier = task({
         key_points: coverLetterResult.keyPoints,
         user_id,
         job_listing_id,
+        // Browser automation result
+        automation: browserAutomationResult ? {
+          status: browserAutomationResult.status,
+          screenshot_url: browserAutomationResult.screenshot_url,
+          fields_filled: browserAutomationResult.fields_filled,
+        } : undefined,
       };
     } catch (error) {
       console.error('[Auto Applier] Error:', error);

@@ -193,7 +193,7 @@ async function testStrategicDirectives() {
   try {
     const {
       getActiveDirectives,
-      getDirectivesByType,
+      getDirectiveHistory,
     } = await import('./src/services/strategic-directives');
 
     success('Strategic directives service loaded');
@@ -233,7 +233,7 @@ async function testRejectionInsights() {
   section('8. REJECTION INSIGHTS SERVICE TEST');
 
   try {
-    const { analyzeRejectionEmail } = await import('./src/services/rejection-insights');
+    const { parseRejectionEmail } = await import('./src/services/rejection-insights');
 
     success('Rejection insights service loaded');
 

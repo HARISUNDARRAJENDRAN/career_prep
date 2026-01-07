@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/card';
 import { ThemeSelector } from '@/components/ui/theme-selector';
 import { ConnectedAccounts } from '@/components/settings/connected-accounts';
+import { GmailConnection } from '@/components/settings/gmail-connection';
 
 export default async function SettingsPage() {
   const user = await currentUser();
@@ -34,6 +35,32 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <ThemeSelector />
+        </CardContent>
+      </Card>
+
+      {/* Email Monitoring */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Email Monitoring</CardTitle>
+          <CardDescription>
+            Connect your Gmail to automatically track application responses, rejections, and interview invitations.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <GmailConnection />
+          <div className="mt-4 rounded-lg bg-muted/50 p-4">
+            <h4 className="mb-2 font-medium">How it works</h4>
+            <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
+              <li>Connects securely via Google OAuth 2.0</li>
+              <li>Monitors your inbox hourly for job-related emails</li>
+              <li>Automatically updates application statuses</li>
+              <li>Provides AI-powered rejection insights and feedback</li>
+              <li>Read-only access - we never send emails on your behalf</li>
+            </ul>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Your credentials are encrypted with AES-256-GCM and stored securely.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
