@@ -94,3 +94,22 @@ export {
   type VelocityTrend,
   type PeriodMetrics,
 } from './strategist';
+
+// Resume Architect Agent (Resume Tailoring & Generation)
+export {
+  ResumeArchitectAgent,
+  createResumeArchitectAgent,
+  tailorResume,
+  analyzeJobForResume,
+  generateResume,
+  RESUME_PROMPTS,
+  registerResumeArchitectTools,
+  getResumeArchitectToolIds,
+  type ResumeTailoringContext,
+  type BatchTailoringContext,
+  type ResumeReviewContext,
+  type ResumeTailoringOutput,
+  type JobAnalysisOutput,
+  type ResumeArchitectConfig,
+  type ResumeArchitectResult,
+} from './resume-architect';

@@ -58,6 +58,20 @@ export const userProfiles = pgTable('user_profiles', {
     }>
   >(),
 
+  // Contact Information (for job applications)
+  phone: varchar('phone', { length: 20 }),
+
+  // Social & Professional Links
+  linkedin_url: varchar('linkedin_url', { length: 500 }),
+  github_url: varchar('github_url', { length: 500 }),
+  portfolio_url: varchar('portfolio_url', { length: 500 }),
+
+  // Address fields (for job applications)
+  city: varchar('city', { length: 100 }),
+  state: varchar('state', { length: 100 }),
+  country: varchar('country', { length: 100 }),
+  zip_code: varchar('zip_code', { length: 20 }),
+
   // Short professional summary
   bio: text('bio'),
 

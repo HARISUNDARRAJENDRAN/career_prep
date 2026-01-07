@@ -181,9 +181,9 @@ export const interviewAnalyzer = task({
           // Note: job_role and company not stored in interview schema
           // These are skill verification interviews, not job-specific
           config: {
-            max_iterations: 3,
+            max_iterations: 5, // Increased to give more chances to reach 85% threshold
             confidence_threshold: 0.85,
-            timeout_ms: 90000, // 90 seconds
+            timeout_ms: 120000, // 2 minutes (increased for more iterations)
             enable_learning: true,
           },
         }
@@ -380,6 +380,20 @@ export const interviewAnalyzer = task({
           },
         });
       }
+
+      // =====================================================================
+      // Step 8: Trigger interview embedding for RAG context
+      // =====================================================================
+      console.log('[Interview Analyzer] Triggering interview embedding');
+      await publishAgentEvent({
+        type: 'INTERVIEW_EMBEDDING_NEEDED',
+        payload: {
+          interview_id,
+          user_id,
+          interview_type: payload.interview_type,
+          duration_minutes: payload.duration_minutes,
+        },
+      });
 
       // =====================================================================
       // Complete

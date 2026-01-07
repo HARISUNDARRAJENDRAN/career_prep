@@ -69,3 +69,12 @@ export interface JobEmbeddingResult {
   vectorId: string;
   embeddingModel: string;
 }
+
+// Interview transcript embedding result
+export interface InterviewEmbeddingResult {
+  chunkCount: number;
+  vectorIds: string[];
+  embeddingModel: string;
+  interviewId: string;
+  skillsEmbedded: string[];
+}

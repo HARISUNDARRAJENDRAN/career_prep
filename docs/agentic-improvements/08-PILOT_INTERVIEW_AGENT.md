@@ -276,10 +276,11 @@ interface AgentConfig {
 }
 
 const DEFAULT_CONFIG: AgentConfig = {
-  max_iterations: 3,
+  max_iterations: 5,           // Increased for better confidence convergence
   confidence_threshold: 0.85,
-  timeout_ms: 120000,  // 2 minutes
+  timeout_ms: 120000,          // 2 minutes
   enable_learning: true,
+  graceful_degradation: true,  // Accept valid output even if threshold not met
 };
 
 export class InterviewerAgent {

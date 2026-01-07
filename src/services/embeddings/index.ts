@@ -28,6 +28,7 @@ import type {
   SearchOptions,
   ResumeEmbeddingResult,
   JobEmbeddingResult,
+  InterviewEmbeddingResult,
 } from './types';
 
 // Configuration
@@ -353,6 +354,146 @@ export async function findRelevantResumeContext(
 }
 
 /**
+ * Embed and store an interview transcript
+ *
+ * This will:
+ * 1. Delete existing embeddings for this interview
+ * 2. Chunk the transcript into semantic sections
+ * 3. Generate embeddings for each chunk
+ * 4. Store in document_embeddings table
+ * 5. Return metadata about the embedding
+ */
+export async function embedInterviewTranscript(
+  interviewId: string,
+  userId: string,
+  transcript: string,
+  metadata?: {
+    interviewType?: 'reality_check' | 'weekly_sprint' | 'mock_interview';
+    skillsDiscussed?: string[];
+    duration?: number;
+  }
+): Promise<InterviewEmbeddingResult> {
+  console.log(`[Embedding Service] Embedding interview transcript ${interviewId}`);
+
+  // Generate content hash to detect changes
+  const syncHash = generateContentHash(transcript);
+
+  // Check if interview is already embedded with same content
+  const existing = await db.query.documentEmbeddings.findFirst({
+    where: and(
+      eq(documentEmbeddings.source_type, 'interview_transcript'),
+      eq(documentEmbeddings.source_id, interviewId)
+    ),
+  });
+
+  if (existing?.metadata && (existing.metadata as Record<string, unknown>).sync_hash === syncHash) {
+    console.log('[Embedding Service] Interview already embedded, skipping');
+    // Return existing data
+    const existingEmbeddings = await db.query.documentEmbeddings.findMany({
+      where: and(
+        eq(documentEmbeddings.source_type, 'interview_transcript'),
+        eq(documentEmbeddings.source_id, interviewId)
+      ),
+    });
+    return {
+      chunkCount: existingEmbeddings.length,
+      vectorIds: existingEmbeddings.map((e) => e.id),
+      embeddingModel: EMBEDDING_MODEL,
+      interviewId,
+      skillsEmbedded: metadata?.skillsDiscussed || [],
+    };
+  }
+
+  // Delete existing embeddings for this interview
+  await db
+    .delete(documentEmbeddings)
+    .where(
+      and(
+        eq(documentEmbeddings.source_type, 'interview_transcript'),
+        eq(documentEmbeddings.source_id, interviewId)
+      )
+    );
+
+  console.log('[Embedding Service] Deleted old interview embeddings');
+
+  // Chunk the transcript - use general text chunker with interview-specific settings
+  const chunks = chunkText(transcript, {
+    chunkSize: 1000, // Larger chunks for conversational context
+    overlap: 150,    // More overlap to preserve conversation flow
+  });
+  console.log(`[Embedding Service] Created ${chunks.length} chunks from interview`);
+
+  if (chunks.length === 0) {
+    return {
+      chunkCount: 0,
+      vectorIds: [],
+      embeddingModel: EMBEDDING_MODEL,
+      interviewId,
+      skillsEmbedded: [],
+    };
+  }
+
+  // Generate embeddings in batch
+  const embeddings = await generateEmbeddingsBatch(chunks.map((c) => c.text));
+  console.log(`[Embedding Service] Generated ${embeddings.length} embeddings`);
+
+  // Store embeddings
+  const vectorIds: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const embedding = embeddings[i];
+
+    const [inserted] = await db
+      .insert(documentEmbeddings)
+      .values({
+        source_type: 'interview_transcript',
+        source_id: interviewId,
+        user_id: userId,
+        chunk_text: chunk.text,
+        chunk_index: chunk.index,
+        embedding: embedding,
+        metadata: {
+          interview_type: metadata?.interviewType,
+          skills_discussed: metadata?.skillsDiscussed,
+          duration: metadata?.duration,
+          sync_hash: syncHash,
+        },
+      })
+      .returning({ id: documentEmbeddings.id });
+
+    vectorIds.push(inserted.id);
+  }
+
+  console.log(`[Embedding Service] Stored ${vectorIds.length} interview embeddings`);
+
+  return {
+    chunkCount: chunks.length,
+    vectorIds,
+    embeddingModel: EMBEDDING_MODEL,
+    interviewId,
+    skillsEmbedded: metadata?.skillsDiscussed || [],
+  };
+}
+
+/**
+ * Find relevant interview context for a query
+ *
+ * Used to retrieve past interview responses that are relevant to current questions
+ */
+export async function findRelevantInterviewContext(
+  userId: string,
+  query: string,
+  limit: number = 3
+): Promise<SimilaritySearchResult[]> {
+  return searchSimilar(query, {
+    sourceType: 'interview_transcript',
+    userId,
+    limit,
+    minSimilarity: 0.45, // Slightly lower threshold for conversational content
+  });
+}
+
+/**
  * Delete all embeddings for a user
  */
 export async function deleteUserEmbeddings(userId: string): Promise<number> {
@@ -385,5 +526,5 @@ export async function deleteSourceEmbeddings(
 }
 
 // Export types
-export type { TextChunk, SimilaritySearchResult, SearchOptions, ResumeEmbeddingResult, JobEmbeddingResult };
+export type { TextChunk, SimilaritySearchResult, SearchOptions, ResumeEmbeddingResult, JobEmbeddingResult, InterviewEmbeddingResult };
 export { chunkText, chunkResume, generateContentHash } from './chunker';

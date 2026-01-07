@@ -18,6 +18,8 @@ import {
   Search,
   FileText,
   Zap,
+  ScrollText,
+  Bot,
 } from 'lucide-react';
 import { useUser, useClerk } from '@clerk/nextjs';
 
@@ -68,6 +70,11 @@ const mainNavItems = [
     url: '/interviews',
     icon: Mic,
   },
+  {
+    title: 'Resume Builder',
+    url: '/resume/builder',
+    icon: ScrollText,
+  },
 ];
 
 // Job Hunt section with sub-items
@@ -100,6 +107,11 @@ const lowerNavItems = [
     title: 'Market Insights',
     url: '/market-insights',
     icon: TrendingUp,
+  },
+  {
+    title: 'Agent Control',
+    url: '/agent-requests',
+    icon: Bot,
   },
 ];
 

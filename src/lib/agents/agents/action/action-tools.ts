@@ -17,8 +17,9 @@ import {
   userProfiles,
   userSkills,
   users,
+  strategicDirectives,
 } from '@/drizzle/schema';
-import { eq, and, gte, sql, desc } from 'drizzle-orm';
+import { eq, and, gte, sql, desc, or, isNull, inArray } from 'drizzle-orm';
 import {
   buildCoverLetterPrompt,
   buildApplicationEvaluationPrompt,
@@ -27,6 +28,13 @@ import {
   ACTION_PROMPTS,
 } from './action-prompts';
 import { safeJsonParse } from '../../utils/safe-json';
+import {
+  getCareerAutomationClient,
+  type UserProfile as CareerUserProfile,
+  type ResumeProfile,
+  type FormAnalysisResponse,
+} from '@/lib/services/career-automation-client';
+import { getCredentialsForPythonService } from '@/lib/security/credentials-service';
 
 // ============================================================================
 // Input/Output Schemas
@@ -656,6 +664,892 @@ const prioritizerTool: ToolDefinition<
 };
 
 // ============================================================================
+// Career Automation Service Tools (Browser Automation)
+// ============================================================================
+
+const SubmitApplicationInput = z.object({
+  user_id: z.string(),
+  job_listing_id: z.string(),
+  application_id: z.string(),
+  resume_file_id: z.string().optional(),
+  cover_letter: z.string().optional(),
+  dry_run: z.boolean().default(false),
+});
+
+const SubmitApplicationOutput = z.object({
+  status: z.enum(['success', 'draft', 'login_required', 'captcha_blocked', 'form_error', 'timeout', 'failed', 'service_unavailable']),
+  message: z.string(),
+  screenshot_url: z.string().optional(),
+  fields_filled: z.number(),
+  fields_missing: z.array(z.string()),
+});
+
+const GenerateLatexResumeInput = z.object({
+  user_id: z.string(),
+  job_listing_id: z.string().optional(),
+  template: z.enum(['modern', 'classic', 'minimalist', 'deedy']).default('modern'),
+});
+
+const GenerateLatexResumeOutput = z.object({
+  success: z.boolean(),
+  pdf_url: z.string().optional(),
+  file_id: z.string().optional(),
+  template_used: z.string(),
+  message: z.string(),
+});
+
+/**
+ * Submit Application - Uses browser automation to actually submit applications
+ */
+const submitApplicationTool: ToolDefinition<
+  z.infer<typeof SubmitApplicationInput>,
+  z.infer<typeof SubmitApplicationOutput>
+> = {
+  id: 'submit_application',
+  name: 'Submit Application',
+  description: 'Submit a job application using browser automation (headless browser)',
+  version: '1.0.0',
+  category: 'external_api',
+  tags: ['browser', 'automation', 'submit', 'apply'],
+  input_schema: SubmitApplicationInput,
+  output_schema: SubmitApplicationOutput,
+  handler: async (input) => {
+    const client = getCareerAutomationClient();
+
+    // Check if service is available
+    const isAvailable = await client.isAvailable();
+    if (!isAvailable) {
+      return {
+        status: 'service_unavailable' as const,
+        message: 'Career automation service is not available. Please ensure the Python service is running.',
+        fields_filled: 0,
+        fields_missing: [],
+      };
+    }
+
+    // Fetch job details
+    const job = await db.query.jobListings.findFirst({
+      where: eq(jobListings.id, input.job_listing_id),
+    });
+    if (!job) throw new Error(`Job ${input.job_listing_id} not found`);
+
+    // Fetch user details
+    const user = await db.query.users.findFirst({
+      where: eq(users.clerk_id, input.user_id),
+      with: { profile: true },
+    });
+    if (!user) throw new Error(`User ${input.user_id} not found`);
+
+    const profile = user.profile;
+
+    // Build user profile for the automation service
+    const [firstName, ...lastNameParts] = (user.first_name || '').split(' ');
+    const lastName = user.last_name || lastNameParts.join(' ') || '';
+
+    const careerProfile: CareerUserProfile = {
+      first_name: firstName || 'Unknown',
+      last_name: lastName || 'Unknown',
+      email: user.email,
+      phone: profile?.phone || '',
+      city: profile?.city || undefined,
+      state: profile?.state || undefined,
+      country: profile?.country || undefined,
+      zip_code: profile?.zip_code || undefined,
+      current_title: (profile?.work_history as Array<{ title: string }>)?.[0]?.title || undefined,
+      years_experience: profile?.years_of_experience || undefined,
+      linkedin_url: profile?.linkedin_url || undefined,
+      github_url: profile?.github_url || undefined,
+      portfolio_url: profile?.portfolio_url || undefined,
+      authorized_to_work: true,
+      requires_sponsorship: false,
+      willing_to_relocate: true,
+    };
+
+    // Get job URL from raw_data (application_url is the correct field in schema)
+    const jobUrl = job.raw_data?.application_url;
+
+    if (!jobUrl) {
+      return {
+        status: 'failed' as const,
+        message: 'No job URL available for this listing',
+        fields_filled: 0,
+        fields_missing: ['job_url'],
+      };
+    }
+
+    // Determine platform from job URL
+    let platform: 'linkedin' | 'indeed' | 'glassdoor' | null = null;
+    const jobUrlLower = jobUrl.toLowerCase();
+    if (jobUrlLower.includes('linkedin.com')) {
+      platform = 'linkedin';
+    } else if (jobUrlLower.includes('indeed.com')) {
+      platform = 'indeed';
+    } else if (jobUrlLower.includes('glassdoor.com')) {
+      platform = 'glassdoor';
+    }
+
+    // Fetch encrypted credentials for the platform (if available)
+    let sessionCookies: Record<string, string> | undefined;
+    if (platform) {
+      try {
+        const credentials = await getCredentialsForPythonService(input.user_id, platform);
+        if (credentials) {
+          sessionCookies = credentials.cookies;
+          console.log(`[submit_application] Using encrypted credentials for ${platform}`);
+        } else {
+          console.log(`[submit_application] No credentials found for ${platform}, attempting without authentication`);
+        }
+      } catch (error) {
+        console.error(`[submit_application] Failed to fetch credentials for ${platform}:`, error);
+        // Continue without credentials - browser may still work for public applications
+      }
+    }
+
+    try {
+      const result = await client.applyToJob({
+        job_url: jobUrl,
+        profile: careerProfile,
+        resume_file_id: input.resume_file_id,
+        cover_letter: input.cover_letter,
+        session_cookies: sessionCookies,
+        platform: platform ?? undefined,
+        dry_run: input.dry_run,
+        take_screenshot: true,
+      });
+
+      // Update application status in database
+      // Map automation status to database status (schema supports: draft, applied, interviewing, offered, rejected, ghosted)
+      const dbStatus = result.status === 'success' ? 'applied' as const : 'draft' as const;
+
+      await db.update(jobApplications)
+        .set({
+          status: dbStatus,
+          applied_at: result.status === 'success' ? new Date() : null,
+          last_activity_at: new Date(),
+          raw_data: sql`raw_data || ${JSON.stringify({
+            automation_result: {
+              status: result.status,
+              fields_filled: result.fields_filled,
+              fields_missing: result.fields_missing,
+              screenshot_url: result.screenshot_url,
+              timestamp: result.timestamp,
+            },
+          })}::jsonb`,
+        })
+        .where(eq(jobApplications.id, input.application_id));
+
+      return {
+        status: result.status,
+        message: result.message,
+        screenshot_url: result.screenshot_url,
+        fields_filled: result.fields_filled,
+        fields_missing: result.fields_missing,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        status: 'failed' as const,
+        message: `Application submission failed: ${errorMessage}`,
+        fields_filled: 0,
+        fields_missing: [],
+      };
+    }
+  },
+  cost: { latency_ms: 30000, tokens: 0 },
+  requires: [],
+  best_for: ['Submitting applications via browser automation'],
+  not_suitable_for: ['Evaluating applications', 'Creating draft applications'],
+  examples: [],
+  enabled: true,
+};
+
+/**
+ * Generate LaTeX Resume - Creates a tailored PDF resume
+ */
+const generateLatexResumeTool: ToolDefinition<
+  z.infer<typeof GenerateLatexResumeInput>,
+  z.infer<typeof GenerateLatexResumeOutput>
+> = {
+  id: 'generate_latex_resume',
+  name: 'Generate LaTeX Resume',
+  description: 'Generate a tailored PDF resume using LaTeX templates',
+  version: '1.0.0',
+  category: 'generation',
+  tags: ['resume', 'pdf', 'latex', 'generation'],
+  input_schema: GenerateLatexResumeInput,
+  output_schema: GenerateLatexResumeOutput,
+  handler: async (input) => {
+    const client = getCareerAutomationClient();
+
+    // Check if service is available
+    const isAvailable = await client.isAvailable();
+    if (!isAvailable) {
+      return {
+        success: false,
+        template_used: input.template,
+        message: 'Career automation service is not available. Please ensure the Python service is running.',
+      };
+    }
+
+    // Fetch user details
+    const user = await db.query.users.findFirst({
+      where: eq(users.clerk_id, input.user_id),
+      with: { profile: true },
+    });
+    if (!user) throw new Error(`User ${input.user_id} not found`);
+
+    const profile = user.profile;
+
+    // Fetch user skills
+    const userSkillRecords = await db.query.userSkills.findMany({
+      where: eq(userSkills.user_id, input.user_id),
+      with: { skill: true },
+    });
+
+    // Build resume profile
+    const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Unknown';
+
+    const workHistory = (profile?.work_history as Array<{
+      title: string;
+      company: string;
+      location?: string;
+      start_date: string;
+      end_date?: string;
+      description?: string;
+    }>) || [];
+
+    const education = (profile?.education as Array<{
+      degree: string;
+      institution: string;
+      field_of_study?: string;
+      end_date?: string;
+      gpa?: number;
+    }>) || [];
+
+    // Build location string from profile fields
+    const locationParts = [profile?.city, profile?.state, profile?.country].filter(Boolean);
+    const location = locationParts.length > 0 ? locationParts.join(', ') : undefined;
+
+    const resumeProfile: ResumeProfile = {
+      name: fullName,
+      email: user.email,
+      phone: profile?.phone || '',
+      location: location,
+      linkedin: profile?.linkedin_url || undefined,
+      github: profile?.github_url || undefined,
+      portfolio: profile?.portfolio_url || undefined,
+      summary: profile?.bio || undefined,
+      experience: workHistory.map((w) => ({
+        title: w.title,
+        company: w.company,
+        location: w.location,
+        start_date: w.start_date,
+        end_date: w.end_date || 'Present',
+        bullets: w.description ? w.description.split('\n').filter(Boolean) : [],
+      })),
+      education: education.map((e) => ({
+        institution: e.institution,
+        degree: e.degree,
+        field: e.field_of_study,
+        graduation_date: e.end_date || '',
+        gpa: e.gpa?.toString(),
+      })),
+      skills: {
+        technical: userSkillRecords
+          .filter((us) => us.skill?.category === 'technical')
+          .map((us) => us.skill?.name || '')
+          .filter(Boolean),
+        soft: userSkillRecords
+          .filter((us) => us.skill?.category === 'soft')
+          .map((us) => us.skill?.name || '')
+          .filter(Boolean),
+        languages: userSkillRecords
+          .filter((us) => us.skill?.category === 'language')
+          .map((us) => us.skill?.name || '')
+          .filter(Boolean),
+      },
+      projects: [],
+      certifications: [],
+    };
+
+    // Fetch job details if provided (for tailoring)
+    let jobTitle: string | undefined;
+    let jobDescription: string | undefined;
+    let jobCompany: string | undefined;
+
+    if (input.job_listing_id) {
+      const job = await db.query.jobListings.findFirst({
+        where: eq(jobListings.id, input.job_listing_id),
+      });
+      if (job) {
+        jobTitle = job.title;
+        jobCompany = job.company;
+        jobDescription = (job.raw_data as { description?: string })?.description;
+      }
+    }
+
+    try {
+      const result = await client.generateResume({
+        profile: resumeProfile,
+        template: input.template,
+        job_title: jobTitle,
+        job_description: jobDescription,
+        job_company: jobCompany,
+      });
+
+      return {
+        success: result.success,
+        pdf_url: result.pdf_url || client.getResumePdfUrl(result.file_id),
+        file_id: result.file_id,
+        template_used: result.template_used,
+        message: result.message,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        template_used: input.template,
+        message: `Resume generation failed: ${errorMessage}`,
+      };
+    }
+  },
+  cost: { latency_ms: 10000, tokens: 0 },
+  requires: [],
+  best_for: ['Generating tailored PDF resumes'],
+  not_suitable_for: ['Submitting applications'],
+  examples: [],
+  enabled: true,
+};
+
+// ============================================================================
+// Hybrid Job Sourcing (JobSpy + Database)
+// ============================================================================
+
+const HybridJobSourceInput = z.object({
+  user_id: z.string(),
+  search_term: z.string(),
+  location: z.string().optional(),
+  remote: z.boolean().default(false),
+  results_wanted: z.number().default(20),
+  include_saved_jobs: z.boolean().default(true),
+  hours_old: z.number().default(72),
+});
+
+const HybridJobSourceOutput = z.object({
+  jobs: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    company: z.string(),
+    location: z.string().optional(),
+    job_url: z.string(),
+    description: z.string().optional(),
+    salary_range: z.string().optional(),
+    source: z.enum(['jobspy', 'database']),
+    platform: z.string(),
+    date_posted: z.string().optional(),
+    is_remote: z.boolean(),
+  })),
+  total_results: z.number(),
+  jobspy_results: z.number(),
+  database_results: z.number(),
+  message: z.string(),
+});
+
+/**
+ * Hybrid Job Source - Combines JobSpy live results with database-saved jobs
+ */
+const hybridJobSourceTool: ToolDefinition<
+  z.infer<typeof HybridJobSourceInput>,
+  z.infer<typeof HybridJobSourceOutput>
+> = {
+  id: 'hybrid_job_source',
+  name: 'Hybrid Job Source',
+  description: 'Fetch jobs from both JobSpy (live/fresh) and database-saved jobs (Jooble/Adzuna)',
+  version: '1.0.0',
+  category: 'data_retrieval',
+  tags: ['jobs', 'sourcing', 'hybrid', 'jobspy', 'jooble', 'adzuna'],
+  input_schema: HybridJobSourceInput,
+  output_schema: HybridJobSourceOutput,
+  handler: async (input) => {
+    const client = getCareerAutomationClient();
+    const allJobs: z.infer<typeof HybridJobSourceOutput>['jobs'] = [];
+    let jobspyCount = 0;
+    let databaseCount = 0;
+
+    // 1. Fetch live results from JobSpy (via Python service)
+    try {
+      const jobspyResults = await client.searchJobs({
+        search_term: input.search_term,
+        location: input.location,
+        remote: input.remote,
+        results_wanted: Math.floor(input.results_wanted / 2), // Half from JobSpy
+        hours_old: input.hours_old,
+        site_names: ['indeed', 'linkedin', 'glassdoor'],
+      });
+
+      // Convert JobSpy results to our format
+      for (const job of jobspyResults.jobs) {
+        allJobs.push({
+          id: `jobspy_${job.id}`,
+          title: job.title,
+          company: job.company,
+          location: job.location || undefined,
+          job_url: job.job_url,
+          description: job.description || undefined,
+          salary_range: job.salary_min && job.salary_max
+            ? `$${job.salary_min.toLocaleString()}-$${job.salary_max.toLocaleString()}`
+            : undefined,
+          source: 'jobspy' as const,
+          platform: job.source,
+          date_posted: job.date_posted || undefined,
+          is_remote: job.is_remote,
+        });
+      }
+      jobspyCount = jobspyResults.jobs.length;
+    } catch (error) {
+      console.error('[hybrid_job_source] JobSpy fetch failed:', error);
+      // Continue with database-only results
+    }
+
+    // 2. Fetch saved jobs from database (Jooble/Adzuna) if enabled
+    if (input.include_saved_jobs) {
+      try {
+        const cutoffDate = new Date();
+        cutoffDate.setHours(cutoffDate.getHours() - input.hours_old);
+
+        const savedJobs = await db.query.jobListings.findMany({
+          where: and(
+            sql`LOWER(${jobListings.title}) LIKE LOWER(${'%' + input.search_term + '%'})`,
+            gte(jobListings.created_at, cutoffDate)
+          ),
+          limit: Math.floor(input.results_wanted / 2), // Half from database
+          orderBy: [desc(jobListings.created_at)],
+        });
+
+        for (const job of savedJobs) {
+          allJobs.push({
+            id: job.id,
+            title: job.title,
+            company: job.company,
+            location: job.location || undefined,
+            job_url: job.raw_data?.application_url || '',
+            description: job.raw_data?.description || undefined,
+            salary_range: job.salary_range || undefined,
+            source: 'database' as const,
+            platform: job.raw_data?.source_metadata?.source as string || 'jooble',
+            date_posted: job.created_at.toISOString(),
+            is_remote: job.location?.toLowerCase().includes('remote') || false,
+          });
+        }
+        databaseCount = savedJobs.length;
+      } catch (error) {
+        console.error('[hybrid_job_source] Database fetch failed:', error);
+        // Continue with JobSpy-only results
+      }
+    }
+
+    // Remove duplicates (same company + title)
+    const uniqueJobs = allJobs.filter((job, index, self) =>
+      index === self.findIndex((j) =>
+        j.company.toLowerCase() === job.company.toLowerCase() &&
+        j.title.toLowerCase() === job.title.toLowerCase()
+      )
+    );
+
+    return {
+      jobs: uniqueJobs.slice(0, input.results_wanted), // Limit to requested amount
+      total_results: uniqueJobs.length,
+      jobspy_results: jobspyCount,
+      database_results: databaseCount,
+      message: `Found ${uniqueJobs.length} unique jobs (${jobspyCount} from JobSpy, ${databaseCount} from database)`,
+    };
+  },
+  cost: { latency_ms: 5000, tokens: 0 },
+  requires: [],
+  best_for: ['Finding fresh job opportunities', 'Combining live and saved job sources'],
+  not_suitable_for: ['Applying to jobs', 'Generating resumes'],
+  examples: [],
+  enabled: true,
+};
+
+// ============================================================================
+// Form Field Analyzer Tool (Pre-Application Check)
+// ============================================================================
+
+const FormFieldAnalyzerInput = z.object({
+  user_id: z.string(),
+  job_url: z.string(),
+  job_listing_id: z.string().optional(),
+});
+
+const FormFieldAnalyzerOutput = z.object({
+  success: z.boolean(),
+  job_url: z.string(),
+  company: z.string().nullable(),
+  job_title: z.string().nullable(),
+  platform: z.string(),
+  total_fields: z.number(),
+  required_fields: z.array(z.string()),
+  missing_profile_fields: z.array(z.string()),
+  blockers: z.array(z.string()),
+  can_apply: z.boolean(),
+  estimated_fill_rate: z.number(),
+  screenshot_url: z.string().nullable(),
+  recommendation: z.string(),
+  message: z.string(),
+});
+
+/**
+ * Form Field Analyzer - Pre-scans job application pages before applying
+ */
+const formFieldAnalyzerTool: ToolDefinition<
+  z.infer<typeof FormFieldAnalyzerInput>,
+  z.infer<typeof FormFieldAnalyzerOutput>
+> = {
+  id: 'form_field_analyzer',
+  name: 'Form Field Analyzer',
+  description: 'Pre-scan a job application page to identify required fields, blockers, and estimate fill rate before applying',
+  version: '1.0.0',
+  category: 'analysis',
+  tags: ['form', 'analysis', 'pre-check', 'validation'],
+  input_schema: FormFieldAnalyzerInput,
+  output_schema: FormFieldAnalyzerOutput,
+  handler: async (input) => {
+    try {
+      const client = getCareerAutomationClient();
+
+      // Check if service is available
+      const isAvailable = await client.isAvailable();
+      if (!isAvailable) {
+        return {
+          success: false,
+          job_url: input.job_url,
+          company: null,
+          job_title: null,
+          platform: 'unknown',
+          total_fields: 0,
+          required_fields: [],
+          missing_profile_fields: [],
+          blockers: ['service_unavailable'],
+          can_apply: false,
+          estimated_fill_rate: 0,
+          screenshot_url: null,
+          recommendation: 'Career automation service is not available. Try again later.',
+          message: 'Service unavailable',
+        };
+      }
+
+      // Get user credentials for the platform
+      let sessionCookies: Record<string, string> | undefined;
+      try {
+        const url = new URL(input.job_url);
+        let platform: 'linkedin' | 'indeed' | 'glassdoor' | undefined;
+
+        if (url.hostname.includes('linkedin')) platform = 'linkedin';
+        else if (url.hostname.includes('indeed')) platform = 'indeed';
+        else if (url.hostname.includes('glassdoor')) platform = 'glassdoor';
+
+        if (platform) {
+          const credentials = await getCredentialsForPythonService(input.user_id, platform);
+          sessionCookies = credentials?.cookies || undefined;
+        }
+      } catch {
+        // Continue without credentials
+      }
+
+      // Analyze the form
+      const analysis = await client.analyzeForm({
+        job_url: input.job_url,
+        session_cookies: sessionCookies,
+      });
+
+      // Generate recommendation based on analysis
+      let recommendation: string;
+      if (analysis.blockers.length > 0) {
+        if (analysis.blockers.includes('login_required')) {
+          recommendation = 'Login required. Connect your account in Settings to enable auto-apply.';
+        } else if (analysis.blockers.includes('captcha_detected')) {
+          recommendation = 'CAPTCHA detected. Manual application required.';
+        } else {
+          recommendation = `Blocked: ${analysis.blockers.join(', ')}. Consider manual application.`;
+        }
+      } else if (analysis.estimated_fill_rate >= 80) {
+        recommendation = 'High fill rate. Proceed with auto-apply.';
+      } else if (analysis.estimated_fill_rate >= 60) {
+        recommendation = 'Moderate fill rate. Review missing fields before applying.';
+      } else if (analysis.estimated_fill_rate >= 40) {
+        recommendation = 'Low fill rate. User should complete profile before applying.';
+      } else {
+        recommendation = 'Very low fill rate. Manual application recommended.';
+      }
+
+      return {
+        success: analysis.success,
+        job_url: analysis.job_url,
+        company: analysis.company,
+        job_title: analysis.job_title,
+        platform: analysis.platform,
+        total_fields: analysis.fields.length,
+        required_fields: analysis.required_fields,
+        missing_profile_fields: analysis.missing_profile_fields,
+        blockers: analysis.blockers,
+        can_apply: analysis.can_apply,
+        estimated_fill_rate: analysis.estimated_fill_rate,
+        screenshot_url: analysis.screenshot_url,
+        recommendation,
+        message: analysis.message,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        job_url: input.job_url,
+        company: null,
+        job_title: null,
+        platform: 'unknown',
+        total_fields: 0,
+        required_fields: [],
+        missing_profile_fields: [],
+        blockers: ['error'],
+        can_apply: false,
+        estimated_fill_rate: 0,
+        screenshot_url: null,
+        recommendation: 'Analysis failed. Try manual application.',
+        message: `Analysis failed: ${errorMessage}`,
+      };
+    }
+  },
+  cost: { latency_ms: 15000, tokens: 0, api_calls: 1 }, // Browser automation takes time
+  requires: [],
+  best_for: [
+    'Pre-checking job applications before submission',
+    'Identifying missing profile fields',
+    'Detecting login walls and captchas',
+    'Estimating auto-fill success rate',
+  ],
+  not_suitable_for: [
+    'Actually submitting applications',
+    'Real-time form filling',
+  ],
+  examples: [
+    {
+      goal: 'Check if we can auto-apply to a LinkedIn job',
+      input: {
+        user_id: 'user_123',
+        job_url: 'https://www.linkedin.com/jobs/view/123456',
+      },
+      output: {
+        success: true,
+        job_url: 'https://www.linkedin.com/jobs/view/123456',
+        company: 'Tech Corp',
+        job_title: 'Senior Software Engineer',
+        platform: 'linkedin',
+        total_fields: 8,
+        required_fields: ['first_name', 'last_name', 'email', 'phone', 'resume'],
+        missing_profile_fields: [],
+        blockers: [],
+        can_apply: true,
+        estimated_fill_rate: 85,
+        screenshot_url: '/assets/form_analysis_abc123.png',
+        recommendation: 'High fill rate. Proceed with auto-apply.',
+        message: 'Found 8 form fields on linkedin platform.',
+      },
+    },
+  ],
+  enabled: true,
+};
+
+// ============================================================================
+// Directive Checker Tool (Strategist Integration)
+// ============================================================================
+
+const DirectiveCheckerInput = z.object({
+  user_id: z.string(),
+  check_types: z.array(z.enum([
+    'pause_applications',
+    'application_strategy',
+    'resume_rewrite',
+    'focus_shift',
+    'skill_priority',
+  ])).optional(),
+});
+
+const DirectiveCheckerOutput = z.object({
+  can_apply: z.boolean(),
+  active_directives: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    priority: z.string(),
+    title: z.string(),
+    description: z.string(),
+    target_agent: z.string().nullable(),
+    action_required: z.string().nullable(),
+    expires_at: z.string().nullable(),
+  })),
+  blocking_directives: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    title: z.string(),
+    reason: z.string(),
+  })),
+  recommendations: z.array(z.string()),
+  message: z.string(),
+});
+
+/**
+ * Directive Checker - Checks if Action Agent is allowed to apply based on strategic directives
+ * This should be called BEFORE any application submission
+ */
+const directiveCheckerTool: ToolDefinition<
+  z.infer<typeof DirectiveCheckerInput>,
+  z.infer<typeof DirectiveCheckerOutput>
+> = {
+  id: 'directive_checker',
+  name: 'Directive Checker',
+  description: 'Check active strategic directives to determine if applications should proceed or be paused',
+  version: '1.0.0',
+  category: 'validation',
+  tags: ['directive', 'check', 'permission', 'strategy'],
+  input_schema: DirectiveCheckerInput,
+  output_schema: DirectiveCheckerOutput,
+  handler: async (input) => {
+    // Fetch all active directives for this user
+    const checkTypes = input.check_types || [
+      'pause_applications',
+      'application_strategy',
+      'resume_rewrite',
+      'focus_shift',
+      'skill_priority',
+    ];
+
+    const directives = await db
+      .select()
+      .from(strategicDirectives)
+      .where(
+        and(
+          eq(strategicDirectives.user_id, input.user_id),
+          inArray(strategicDirectives.status, ['pending', 'active']),
+          or(
+            isNull(strategicDirectives.expires_at),
+            gte(strategicDirectives.expires_at, new Date())
+          )
+        )
+      )
+      .orderBy(desc(strategicDirectives.priority), desc(strategicDirectives.issued_at));
+
+    // Filter by check types
+    const relevantDirectives = directives.filter(d => checkTypes.includes(d.type as typeof checkTypes[number]));
+
+    // Identify blocking directives
+    const blockingDirectives = relevantDirectives
+      .filter(d => d.type === 'pause_applications')
+      .map(d => ({
+        id: d.id,
+        type: d.type,
+        title: d.title,
+        reason: d.description,
+      }));
+
+    // Check if applications are paused
+    const canApply = blockingDirectives.length === 0;
+
+    // Generate recommendations based on active directives
+    const recommendations: string[] = [];
+
+    for (const directive of relevantDirectives) {
+      if (directive.type === 'focus_shift') {
+        const context = directive.context as { to_role?: string } | null;
+        if (context?.to_role) {
+          recommendations.push(`Focus on ${context.to_role} positions (directive: ${directive.title})`);
+        }
+      } else if (directive.type === 'skill_priority') {
+        const context = directive.context as { priority_skills?: string[] } | null;
+        if (context?.priority_skills?.length) {
+          recommendations.push(`Prioritize jobs requiring: ${context.priority_skills.slice(0, 3).join(', ')}`);
+        }
+      } else if (directive.type === 'application_strategy') {
+        recommendations.push(`Strategy: ${directive.action_required || directive.description}`);
+      } else if (directive.type === 'resume_rewrite') {
+        recommendations.push(`Resume update needed before applying (${directive.title})`);
+      }
+    }
+
+    // Format active directives for output
+    const activeDirectives = relevantDirectives.map(d => ({
+      id: d.id,
+      type: d.type,
+      priority: d.priority,
+      title: d.title,
+      description: d.description,
+      target_agent: d.target_agent,
+      action_required: d.action_required,
+      expires_at: d.expires_at?.toISOString() || null,
+    }));
+
+    // Generate message
+    let message: string;
+    if (!canApply) {
+      message = `Applications are PAUSED. ${blockingDirectives.length} blocking directive(s) active: ${blockingDirectives.map(d => d.title).join(', ')}`;
+    } else if (relevantDirectives.length > 0) {
+      message = `Applications allowed with ${relevantDirectives.length} active directive(s) to consider.`;
+    } else {
+      message = 'No active directives. Applications can proceed normally.';
+    }
+
+    return {
+      can_apply: canApply,
+      active_directives: activeDirectives,
+      blocking_directives: blockingDirectives,
+      recommendations,
+      message,
+    };
+  },
+  cost: { latency_ms: 100, tokens: 0 },
+  requires: [],
+  best_for: [
+    'Pre-flight check before submitting applications',
+    'Ensuring compliance with strategic directives',
+    'Getting current application strategy recommendations',
+  ],
+  not_suitable_for: [
+    'Issuing new directives',
+    'Modifying directives',
+  ],
+  examples: [
+    {
+      goal: 'Check if applications are allowed',
+      input: { user_id: 'user_123' },
+      output: {
+        can_apply: false,
+        active_directives: [
+          {
+            id: 'dir_1',
+            type: 'pause_applications',
+            priority: 'high',
+            title: 'Pause for System Design Prep',
+            description: 'User needs to complete system design practice',
+            target_agent: 'action',
+            action_required: 'Wait until user completes mock interviews',
+            expires_at: '2026-01-14T00:00:00Z',
+          },
+        ],
+        blocking_directives: [
+          {
+            id: 'dir_1',
+            type: 'pause_applications',
+            title: 'Pause for System Design Prep',
+            reason: 'User needs to complete system design practice',
+          },
+        ],
+        recommendations: [],
+        message: 'Applications are PAUSED. 1 blocking directive(s) active.',
+      },
+    },
+  ],
+  enabled: true,
+};
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -672,6 +1566,14 @@ export function registerActionTools(): void {
     companyExclusionCheckerTool,
     followUpAnalyzerTool,
     prioritizerTool,
+    // Career Automation Service tools
+    submitApplicationTool,
+    generateLatexResumeTool,
+    hybridJobSourceTool,
+    // Pre-application analysis
+    formFieldAnalyzerTool,
+    // Strategist Integration
+    directiveCheckerTool,
   ] as const;
 
   for (const tool of tools) {
@@ -697,6 +1599,14 @@ export function getActionToolIds(): string[] {
     'company_exclusion_checker',
     'followup_analyzer',
     'application_prioritizer',
+    // Career Automation Service tools
+    'submit_application',
+    'generate_latex_resume',
+    'hybrid_job_source',
+    // Pre-application analysis
+    'form_field_analyzer',
+    // Strategist Integration
+    'directive_checker',
   ];
 }
 

@@ -28,7 +28,11 @@ Styling: Tailwind CSS v4 (CSS-first config) | Shadcn UI | Geist Font
 
 ##Multi-Agent Architecture:
 
-1. Interviewer Agent (User Profiling): Hume AI voice-to-voice for "Reality Check" benchmarks and weekly logic verification.
+1. Interviewer Agent (User Profiling): Fully autonomous agent with iterative refinement, goal decomposition, and three-tier memory. Uses Hume AI voice-to-voice for "Reality Check" benchmarks and weekly logic verification. Features:
+   - Iterative execution: Loops until 85% confidence threshold or max 5 iterations
+   - Graceful degradation: Accepts valid output even if confidence threshold not fully met
+   - State machine: 12 explicit states with persistence and resume capability
+   - Three-tier memory: Working (current task), Episodic (past analyses), Long-term (patterns)
 
 2. Sentinel Agent (Market Intelligence): Autonomous scrapers for Jooble, Adzuna, and GitHub Velocity.
 

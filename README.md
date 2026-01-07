@@ -20,11 +20,24 @@ Career Prep automates the transition from student to professional by combining e
 
 ## Multi-Agent Architecture
 
-1. **Interviewer Agent** - Hume AI voice-to-voice for "Reality Check" benchmarks and weekly logic verification
+1. **Interviewer Agent** - Autonomous agent with iterative refinement, goal decomposition, and three-tier memory (working, episodic, long-term). Uses Hume AI EVI 3 for voice-to-voice "Reality Check" benchmarks and weekly verification. Features graceful degradation when confidence threshold isn't met.
 2. **Sentinel Agent** - Autonomous scrapers for Jooble, Adzuna, and GitHub Velocity
 3. **Architect Agent** - Generates modular, interleaved roadmaps stored in PostgreSQL
 4. **Action Agent** - Autonomous job application via RAG and email thread management
 5. **Strategist Agent** - Automated rejection parsing to trigger real-time roadmap re-pathing
+
+### Autonomous Agent Features
+
+The Interviewer Agent implements the full autonomous agent architecture:
+
+| Feature | Description |
+|---------|-------------|
+| **Iterative Execution** | Loops until 85% confidence threshold or max 5 iterations |
+| **Goal Decomposition** | Breaks down analysis into sub-goals with success criteria |
+| **Dynamic Tool Selection** | AI-selected tools based on current goal state |
+| **Three-Tier Memory** | Working (task), Episodic (past analyses), Long-term (patterns) |
+| **State Machine** | 12 explicit states with persistence and resume capability |
+| **Graceful Degradation** | Accepts valid output even when confidence threshold isn't fully met |
 
 ## Getting Started
 
@@ -121,9 +134,18 @@ career_prep/
 │   │   ├── schema/            # Table definitions
 │   │   └── db.ts              # Database client
 │   ├── lib/                   # Utility functions
-│   └── services/              # External service integrations
+│   │   └── agents/            # Autonomous agent framework
+│   │       ├── core/          # State machine, memory manager
+│   │       ├── reasoning/     # Goal decomposer, plan generator, confidence scorer
+│   │       ├── tools/         # Tool registry, executor, selector
+│   │       └── agents/        # Agent implementations (interviewer, strategist)
+│   ├── services/              # External service integrations
+│   └── trigger/               # Trigger.dev background jobs
+│       └── jobs/              # Job definitions (interview-analyzer, etc.)
 ├── python-services/           # Python microservices
 │   └── resume-parser/         # Resume parsing with OpenAI
+├── docs/                      # Documentation
+│   └── agentic-improvements/  # Autonomous agent architecture docs
 ├── docker-compose.yml         # PostgreSQL container
 ├── drizzle.config.ts          # Drizzle Kit configuration
 └── trigger.config.ts          # Trigger.dev configuration

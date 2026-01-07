@@ -15,9 +15,13 @@ export * from './schema/roadmaps';
 // Action Agent Domain (Job Applications)
 export * from './schema/jobs';
 
+// Credentials Domain (Secure Platform Authentication)
+export * from './schema/encrypted-credentials';
+
 // Sentinel + Strategist Agents Domain (Market Intelligence)
 export * from './schema/market';
 export * from './schema/strategic-insights';
+export * from './schema/strategic-directives';
 
 // Agent Orchestration Domain (Message Bus)
 export * from './schema/agent-events';

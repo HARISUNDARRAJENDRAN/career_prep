@@ -27,6 +27,7 @@ export { marketScraper, marketCleanup, dailyMarketScraper } from './market-scrap
 // Action Agent Jobs (Legacy)
 export { autoApplier, executeApply } from './auto-applier';
 export { embedResumeJob, reEmbedResumeJob } from './embed-resume';
+export { embedInterviewJob, reEmbedInterviewsJob } from './embed-interview';
 
 // ============================================================================
 // Autonomous Agent Jobs (Phase 5)
@@ -35,6 +36,7 @@ export { embedResumeJob, reEmbedResumeJob } from './embed-resume';
 // Autonomous Sentinel Agent
 export {
   dailyMarketScraper as autonomousMarketScraper,
+  dailyMarketScraperSchedule,
   matchJobsForUser,
   batchMatchAllUsers,
 } from './autonomous-market-scraper';
@@ -60,3 +62,15 @@ export {
 // Strategist Agent Jobs
 export { rejectionParser, trackApplication } from './rejection-parser';
 export { strategistGlobalListener } from './strategist-listener';
+
+// ============================================================================
+// Phase 6: Autonomous Career Management
+// ============================================================================
+
+// Weekly Career Sprint (Strategist Orchestration)
+export {
+  weeklyCareerSprint,
+  runUserSprintTask,
+  dailyGhostingCheck,
+  weeklyRejectionAnalysis,
+} from './weekly-career-sprint';

@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { ThemeSelector } from '@/components/ui/theme-selector';
+import { ConnectedAccounts } from '@/components/settings/connected-accounts';
 
 export default async function SettingsPage() {
   const user = await currentUser();
@@ -33,6 +34,19 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <ThemeSelector />
+        </CardContent>
+      </Card>
+
+      {/* Connected Accounts */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Connected Accounts</CardTitle>
+          <CardDescription>
+            Manage your job platform credentials for autonomous job applications.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ConnectedAccounts />
         </CardContent>
       </Card>
 

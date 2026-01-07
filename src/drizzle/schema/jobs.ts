@@ -101,6 +101,27 @@ export const jobApplications = pgTable('job_applications', {
       body: string;
     }>;
     interview_notes?: string;
+    // Rejection tracking fields
+    rejection_reason?: string;
+    rejection_category?: 'experience' | 'skills' | 'cultural_fit' | 'competition' | 'timing' | 'other';
+    rejection_feedback?: string;
+    rejection_confidence?: number;
+    rejection_parsed_at?: string;
+    rejection_parsed?: boolean;
+    rejection_type?: 'skill_gap' | 'experience_mismatch' | 'cultural_fit' | 'competition' | 'position_filled' | 'generic' | 'unknown' | 'standard_rejection' | 'after_interview' | 'ghosting' | 'auto_rejection' | 'other';
+    skill_gaps?: Array<{ skill: string; importance: string; context?: string; suggestion?: string }>;
+    parsed_at?: string;
+    // Ghosting tracking fields
+    ghosted_reason?: string;
+    ghosted_at?: string;
+    days_since_application?: number;
+    // Resume/cover letter used
+    resume_version?: string;
+    cover_letter?: string;
+    job_url?: string;
+    // Sprint automation fields
+    source?: 'weekly_sprint' | 'manual' | 'action_agent' | 'job_match' | string;
+    created_by?: 'sprint_automation' | 'user' | 'agent' | string;
   }>(),
 
   // Timestamps

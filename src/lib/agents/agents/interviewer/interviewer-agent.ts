@@ -301,11 +301,21 @@ export class InterviewerAgent {
       // PHASE 5: POST-PROCESSING & LEARNING
       // ═══════════════════════════════════════════════════════════════
 
-      if (iterationResult.success && iterationResult.final_output) {
+      // Check if we have valid output - accept it even if confidence threshold wasn't met
+      // This provides graceful degradation when max iterations is reached
+      const hasValidOutput = iterationResult.final_output && 
+        this.isValidAnalysisOutput(iterationResult.final_output);
+      
+      if (hasValidOutput) {
         const analysis = iterationResult.final_output as AnalysisOutput;
+        const confidenceScore = iterationResult.final_assessment?.overall_score || 0;
+        const metThreshold = iterationResult.success;
 
-        // Store analysis in database (could be implemented)
-        // await this.persistAnalysis(analysis);
+        if (!metThreshold) {
+          this.trace(
+            `Analysis completed with lower confidence (${(confidenceScore * 100).toFixed(1)}% < ${(this.config.confidence_threshold * 100).toFixed(1)}% threshold) after ${iterationResult.total_iterations} iterations. Using best available output.`
+          );
+        }
 
         // Record episode for learning
         if (this.config.enable_learning) {
@@ -326,28 +336,28 @@ export class InterviewerAgent {
         });
 
         this.trace(
-          `Analysis completed successfully after ${iterationResult.total_iterations} iterations`
+          `Analysis completed after ${iterationResult.total_iterations} iterations (confidence: ${(confidenceScore * 100).toFixed(1)}%)`
         );
 
         // Transition to success
         await this.stateMachine.transition({
           type: 'EVALUATION_PASS',
           payload: {
-            confidence: iterationResult.final_assessment?.overall_score || 0,
+            confidence: confidenceScore,
           },
         });
 
         return {
-          success: true,
+          success: true, // Mark as success if we have valid output
           analysis,
           iterations: iterationResult.total_iterations,
-          confidence: iterationResult.final_assessment?.overall_score || 0,
+          confidence: confidenceScore,
           duration_ms: Date.now() - startTime,
           reasoning_trace: this.reasoningTrace,
         };
       }
 
-      // Analysis didn't succeed
+      // Analysis truly failed - no valid output produced
       this.trace(`Analysis failed: ${iterationResult.termination_reason}`);
 
       await this.stateMachine.transition({
@@ -392,6 +402,27 @@ export class InterviewerAgent {
   // ==========================================================================
   // Private Methods
   // ==========================================================================
+
+  /**
+   * Check if an output is a valid AnalysisOutput structure
+   */
+  private isValidAnalysisOutput(output: unknown): output is AnalysisOutput {
+    if (!output || typeof output !== 'object') {
+      return false;
+    }
+    
+    const analysis = output as Partial<AnalysisOutput>;
+    
+    // Check for required fields with meaningful content
+    const hasScore = typeof analysis.overall_score === 'number' && analysis.overall_score > 0;
+    const hasStrengths = Array.isArray(analysis.strengths) && analysis.strengths.length > 0;
+    const hasImprovements = Array.isArray(analysis.improvements);
+    const hasDetailedFeedback = !!(analysis.detailed_feedback && 
+      typeof analysis.detailed_feedback === 'object');
+    
+    // Valid if we have at least a score and some content
+    return hasScore && (hasStrengths || hasImprovements || hasDetailedFeedback);
+  }
 
   /**
    * Load relevant context from memory

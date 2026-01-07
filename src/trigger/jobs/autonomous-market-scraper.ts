@@ -255,18 +255,22 @@ export const batchMatchAllUsers = task({
 // ============================================================================
 
 /**
- * Register the daily market scraper schedule
+ * Daily market scraper schedule - runs at 2 AM UTC
+ * MUST be exported for Trigger.dev to register it
  */
-schedules.task({
+export const dailyMarketScraperSchedule = schedules.task({
   id: 'sentinel.daily-market-scraper-schedule',
   cron: '0 2 * * *', // Run at 2 AM UTC daily
-  run: async () => {
-    return dailyMarketScraper.trigger({});
+  run: async (payload) => {
+    console.log('[Sentinel Schedule] Triggered daily market scrape at:', payload.timestamp);
+    const handle = await dailyMarketScraper.trigger({});
+    return { triggered: true, task_id: handle.id };
   },
 });
 
 export default {
   dailyMarketScraper,
+  dailyMarketScraperSchedule,
   matchJobsForUser,
   batchMatchAllUsers,
 };

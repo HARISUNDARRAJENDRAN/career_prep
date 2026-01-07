@@ -66,6 +66,7 @@ export const memoryAgentNameEnum = pgEnum('memory_agent_name', [
   'strategist',
   'coordinator',
   'planner',
+  'resume-architect',
 ]);
 
 // ============================================================================

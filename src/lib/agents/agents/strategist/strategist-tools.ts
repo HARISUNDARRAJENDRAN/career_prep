@@ -16,6 +16,8 @@ import {
   userSkills,
   roadmaps,
   roadmapModules,
+  userProfiles,
+  strategicDirectives,
 } from '@/drizzle/schema';
 import { eq, desc, and, gte, count } from 'drizzle-orm';
 import {
@@ -29,6 +31,17 @@ import { PatternDetector } from './pattern-detector';
 import { RejectionAnalyzer } from './rejection-analyzer';
 import { VelocityTracker } from './velocity-tracker';
 import { safeJsonParseOrDefault } from '../../utils/safe-json';
+import {
+  issueDirective,
+  issueFocusShiftDirective,
+  issueSkillPriorityDirective,
+  issueGhostingResponseDirective,
+  issueRejectionInsightDirective,
+  issueResumeRewriteDirective,
+  issuePauseApplicationsDirective,
+  type DirectiveType,
+  type DirectivePriority,
+} from '@/services/strategic-directives';
 
 // ============================================================================
 // Input/Output Schemas
@@ -784,6 +797,351 @@ const stallDetectorTool: ToolDefinition<
 };
 
 // ============================================================================
+// Directive Emitter Tools (Commander Capabilities)
+// ============================================================================
+
+const DirectiveEmitterInput = z.object({
+  user_id: z.string(),
+  directive_type: z.enum([
+    'focus_shift',
+    'skill_priority',
+    'application_strategy',
+    'market_response',
+    'rejection_insight',
+    'ghosting_response',
+    'success_pattern',
+    'roadmap_adjustment',
+    'pause_applications',
+    'resume_rewrite',
+  ]),
+  priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+  title: z.string(),
+  description: z.string(),
+  reasoning: z.string().optional(),
+  target_agent: z.enum(['action', 'resume', 'architect', 'sentinel']).optional(),
+  action_required: z.string().optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+  expires_in_days: z.number().optional().default(14),
+});
+
+const DirectiveEmitterOutput = z.object({
+  success: z.boolean(),
+  directive_id: z.string(),
+  directive_type: z.string(),
+  priority: z.string(),
+  message: z.string(),
+  superseded_count: z.number(),
+});
+
+/**
+ * Strategy Directive Emitter - Allows Strategist to issue commands to other agents
+ */
+const strategyDirectiveEmitterTool: ToolDefinition<
+  z.infer<typeof DirectiveEmitterInput>,
+  z.infer<typeof DirectiveEmitterOutput>
+> = {
+  id: 'strategy_directive_emitter',
+  name: 'Strategy Directive Emitter',
+  description: 'Issue strategic directives to other agents (Action, Resume, Architect) to change their behavior',
+  version: '1.0.0',
+  category: 'decision',
+  tags: ['directive', 'command', 'strategy', 'control'],
+  input_schema: DirectiveEmitterInput,
+  output_schema: DirectiveEmitterOutput,
+  handler: async (input) => {
+    try {
+      const expiresAt = input.expires_in_days
+        ? new Date(Date.now() + input.expires_in_days * 24 * 60 * 60 * 1000)
+        : undefined;
+
+      const directive = await issueDirective({
+        user_id: input.user_id,
+        type: input.directive_type as DirectiveType,
+        priority: input.priority as DirectivePriority,
+        title: input.title,
+        description: input.description,
+        reasoning: input.reasoning,
+        target_agent: input.target_agent,
+        action_required: input.action_required,
+        context: input.context,
+        expires_at: expiresAt,
+      });
+
+      // Count how many directives were superseded (same type that were pending/active)
+      const supersededResult = await db
+        .select({ count: count() })
+        .from(strategicDirectives)
+        .where(
+          and(
+            eq(strategicDirectives.user_id, input.user_id),
+            eq(strategicDirectives.type, input.directive_type),
+            eq(strategicDirectives.status, 'superseded')
+          )
+        );
+
+      return {
+        success: true,
+        directive_id: directive.id,
+        directive_type: directive.type,
+        priority: directive.priority,
+        message: `Directive "${input.title}" issued successfully to ${input.target_agent || 'all agents'}`,
+        superseded_count: Number(supersededResult[0]?.count ?? 0),
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        directive_id: '',
+        directive_type: input.directive_type,
+        priority: input.priority,
+        message: `Failed to issue directive: ${errorMessage}`,
+        superseded_count: 0,
+      };
+    }
+  },
+  cost: { latency_ms: 200, tokens: 0 },
+  requires: [],
+  best_for: [
+    'Pausing applications when user needs skill development',
+    'Triggering resume rewrites based on low response rates',
+    'Shifting focus to different roles based on market conditions',
+    'Issuing skill priority changes to the Architect agent',
+  ],
+  not_suitable_for: [
+    'Real-time blocking of individual applications',
+    'Immediate action execution',
+  ],
+  examples: [
+    {
+      goal: 'Pause applications for skill building',
+      input: {
+        user_id: 'user_123',
+        directive_type: 'pause_applications',
+        priority: 'high',
+        title: 'Pause for System Design Prep',
+        description: 'User failed 3 system design interviews. Pause applications until practice complete.',
+        target_agent: 'action',
+        expires_in_days: 7,
+      },
+      output: {
+        success: true,
+        directive_id: 'dir_abc123',
+        directive_type: 'pause_applications',
+        priority: 'high',
+        message: 'Directive issued successfully',
+        superseded_count: 0,
+      },
+    },
+  ],
+  enabled: true,
+};
+
+const SearchCriteriaTunerInput = z.object({
+  user_id: z.string(),
+  adjustments: z.object({
+    min_salary_adjustment_percent: z.number().min(-50).max(50).optional(),
+    add_keywords: z.array(z.string()).optional(),
+    remove_keywords: z.array(z.string()).optional(),
+    add_locations: z.array(z.string()).optional(),
+    remove_locations: z.array(z.string()).optional(),
+    expand_to_remote: z.boolean().optional(),
+    adjust_match_threshold: z.number().min(-20).max(20).optional(),
+  }),
+  reason: z.string(),
+});
+
+const SearchCriteriaTunerOutput = z.object({
+  success: z.boolean(),
+  changes_applied: z.array(z.string()),
+  previous_values: z.record(z.string(), z.unknown()),
+  new_values: z.record(z.string(), z.unknown()),
+  directive_issued: z.boolean(),
+  message: z.string(),
+});
+
+/**
+ * Search Criteria Tuner - Adjusts job search parameters based on market feedback
+ */
+const searchCriteriaTunerTool: ToolDefinition<
+  z.infer<typeof SearchCriteriaTunerInput>,
+  z.infer<typeof SearchCriteriaTunerOutput>
+> = {
+  id: 'search_criteria_tuner',
+  name: 'Search Criteria Tuner',
+  description: 'Adjust job search criteria (salary, keywords, locations) based on market feedback and rejection patterns',
+  version: '1.0.0',
+  category: 'decision',
+  tags: ['search', 'tuning', 'criteria', 'adjustment'],
+  input_schema: SearchCriteriaTunerInput,
+  output_schema: SearchCriteriaTunerOutput,
+  handler: async (input) => {
+    const changesApplied: string[] = [];
+    const previousValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+
+    try {
+      // Fetch current user profile
+      const profile = await db.query.userProfiles.findFirst({
+        where: eq(userProfiles.user_id, input.user_id),
+      });
+
+      if (!profile) {
+        return {
+          success: false,
+          changes_applied: [],
+          previous_values: {},
+          new_values: {},
+          directive_issued: false,
+          message: `User profile not found for ${input.user_id}`,
+        };
+      }
+
+      const updates: Partial<typeof profile> = {};
+
+      // Apply salary adjustment
+      if (input.adjustments.min_salary_adjustment_percent !== undefined && profile.salary_expectation_min) {
+        const adjustmentFactor = 1 + (input.adjustments.min_salary_adjustment_percent / 100);
+        const newMinSalary = Math.round(profile.salary_expectation_min * adjustmentFactor);
+
+        previousValues.salary_expectation_min = profile.salary_expectation_min;
+        updates.salary_expectation_min = newMinSalary;
+        newValues.salary_expectation_min = newMinSalary;
+        changesApplied.push(`Adjusted min salary from $${profile.salary_expectation_min.toLocaleString()} to $${newMinSalary.toLocaleString()} (${input.adjustments.min_salary_adjustment_percent > 0 ? '+' : ''}${input.adjustments.min_salary_adjustment_percent}%)`);
+      }
+
+      // Apply location adjustments
+      if (input.adjustments.add_locations?.length || input.adjustments.remove_locations?.length) {
+        let currentLocations = profile.preferred_locations || [];
+        previousValues.preferred_locations = [...currentLocations];
+
+        if (input.adjustments.add_locations?.length) {
+          currentLocations = [...currentLocations, ...input.adjustments.add_locations];
+          changesApplied.push(`Added locations: ${input.adjustments.add_locations.join(', ')}`);
+        }
+
+        if (input.adjustments.remove_locations?.length) {
+          currentLocations = currentLocations.filter(
+            loc => !input.adjustments.remove_locations!.includes(loc)
+          );
+          changesApplied.push(`Removed locations: ${input.adjustments.remove_locations.join(', ')}`);
+        }
+
+        if (input.adjustments.expand_to_remote && !currentLocations.includes('Remote')) {
+          currentLocations.push('Remote');
+          changesApplied.push('Expanded search to include Remote positions');
+        }
+
+        updates.preferred_locations = currentLocations;
+        newValues.preferred_locations = currentLocations;
+      }
+
+      // Apply match threshold adjustment
+      if (input.adjustments.adjust_match_threshold !== undefined) {
+        const currentThreshold = profile.auto_apply_threshold || 75;
+        const newThreshold = Math.max(50, Math.min(100, currentThreshold + input.adjustments.adjust_match_threshold));
+
+        previousValues.auto_apply_threshold = currentThreshold;
+        updates.auto_apply_threshold = newThreshold;
+        newValues.auto_apply_threshold = newThreshold;
+        changesApplied.push(`Adjusted match threshold from ${currentThreshold}% to ${newThreshold}%`);
+      }
+
+      // Apply updates to database
+      if (Object.keys(updates).length > 0) {
+        await db
+          .update(userProfiles)
+          .set({
+            ...updates,
+            updated_at: new Date(),
+          })
+          .where(eq(userProfiles.user_id, input.user_id));
+      }
+
+      // Issue a directive to document the change
+      let directiveIssued = false;
+      if (changesApplied.length > 0) {
+        await issueDirective({
+          user_id: input.user_id,
+          type: 'market_response',
+          priority: 'medium',
+          title: 'Search Criteria Adjusted',
+          description: `Strategist adjusted search criteria: ${changesApplied.join('; ')}`,
+          reasoning: input.reason,
+          target_agent: 'action',
+          action_required: 'Use updated search criteria for future job matching',
+          context: {
+            adjustments: input.adjustments,
+            previous_values: previousValues,
+            new_values: newValues,
+          },
+        });
+        directiveIssued = true;
+      }
+
+      return {
+        success: true,
+        changes_applied: changesApplied,
+        previous_values: previousValues,
+        new_values: newValues,
+        directive_issued: directiveIssued,
+        message: changesApplied.length > 0
+          ? `Applied ${changesApplied.length} adjustment(s) to search criteria`
+          : 'No changes were applied',
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        changes_applied: [],
+        previous_values: previousValues,
+        new_values: newValues,
+        directive_issued: false,
+        message: `Failed to tune search criteria: ${errorMessage}`,
+      };
+    }
+  },
+  cost: { latency_ms: 300, tokens: 0 },
+  requires: [],
+  best_for: [
+    'Widening search when no matches are found',
+    'Lowering salary expectations after many rejections',
+    'Adding Remote as an option when local market is tight',
+    'Adjusting match threshold based on application success rate',
+  ],
+  not_suitable_for: [
+    'Making decisions about individual applications',
+    'One-time job searches',
+  ],
+  examples: [
+    {
+      goal: 'Widen search after 50 applications with no interviews',
+      input: {
+        user_id: 'user_123',
+        adjustments: {
+          min_salary_adjustment_percent: -10,
+          expand_to_remote: true,
+          adjust_match_threshold: -5,
+        },
+        reason: 'No interviews after 50 applications. Widening search criteria to increase match rate.',
+      },
+      output: {
+        success: true,
+        changes_applied: [
+          'Adjusted min salary from $120,000 to $108,000 (-10%)',
+          'Expanded search to include Remote positions',
+          'Adjusted match threshold from 75% to 70%',
+        ],
+        previous_values: { salary_expectation_min: 120000 },
+        new_values: { salary_expectation_min: 108000 },
+        directive_issued: true,
+        message: 'Applied 3 adjustments to search criteria',
+      },
+    },
+  ],
+  enabled: true,
+};
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -799,6 +1157,9 @@ export function registerStrategistTools(): void {
     synthesisReportTool,
     interventionDeciderTool,
     stallDetectorTool,
+    // Commander Tools (Directive System)
+    strategyDirectiveEmitterTool,
+    searchCriteriaTunerTool,
   ] as const;
 
   for (const tool of tools) {
@@ -823,6 +1184,9 @@ export function getStrategistToolIds(): string[] {
     'synthesis_report',
     'intervention_decider',
     'stall_detector',
+    // Commander Tools
+    'strategy_directive_emitter',
+    'search_criteria_tuner',
   ];
 }
 

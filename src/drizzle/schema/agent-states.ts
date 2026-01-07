@@ -53,6 +53,7 @@ export const stateAgentNameEnum = pgEnum('state_agent_name', [
   'strategist',
   'coordinator',
   'planner',
+  'resume-architect',
 ]);
 
 // ============================================================================

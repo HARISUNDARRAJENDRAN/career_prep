@@ -49,6 +49,11 @@ export const documentEmbeddings = pgTable(
       title?: string;
       company?: string;
       location?: string;
+      // For interview transcripts
+      interview_type?: 'reality_check' | 'weekly_sprint' | 'mock_interview';
+      skills_discussed?: string[];
+      duration?: number;
+      sync_hash?: string;
     }>(),
 
     // Timestamps

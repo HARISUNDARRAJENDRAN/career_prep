@@ -87,11 +87,14 @@ export type AgentEventUnion =
   | {
       type: 'REJECTION_PARSED';
       payload: {
-        application_id: string;
+        application_id?: string;
         user_id: string;
-        gaps: string[];
-        recommended_skills: string[];
+        gaps?: string[];
+        recommended_skills?: string[];
         rejection_reason?: string;
+        rejection_type?: string;
+        skill_gaps?: string[];
+        has_feedback?: boolean;
       };
     }
   | {
@@ -158,6 +161,37 @@ export type AgentEventUnion =
       };
     }
   | {
+      type: 'GHOSTING_DETECTED';
+      payload: {
+        user_id: string;
+        ghosted_count: number;
+        ghosting_rate: number;
+        directive_id?: string;
+      };
+    }
+  | {
+      type: 'DIRECTIVE_ISSUED';
+      payload: {
+        directive_id: string;
+        user_id: string;
+        type?: string;
+        directive_type?: string;
+        priority: string;
+        title?: string;
+        target_agent?: string;
+      };
+    }
+  | {
+      type: 'DIRECTIVE_COMPLETED';
+      payload: {
+        directive_id: string;
+        user_id: string;
+        directive_type?: string;
+        success: boolean;
+        impact_metrics?: Record<string, unknown>;
+      };
+    }
+  | {
       type: 'MODULE_COMPLETED';
       payload: {
         user_id: string;
@@ -197,6 +231,44 @@ export type AgentEventUnion =
         method: 'auto' | 'manual';
         match_score?: number;
         cover_letter_id?: string;
+      };
+    }
+  | {
+      type: 'RESUME_UPDATE_REQUESTED';
+      payload: {
+        user_id: string;
+        reason: 'weekly_sprint' | 'rejection_feedback' | 'skill_update' | 'directive' | 'manual';
+        priority_skills?: string[];
+        directive_ids?: string[];
+      };
+    }
+  | {
+      type: 'BATCH_APPLICATION_REQUESTED';
+      payload: {
+        user_id: string;
+        job_ids: string[];
+        source: 'weekly_sprint' | 'manual' | 'job_match';
+        create_as_draft?: boolean;
+      };
+    }
+
+  // -------------------------------------------------------------------------
+  // Embedding Events
+  // -------------------------------------------------------------------------
+  | {
+      type: 'RESUME_UPLOADED';
+      payload: {
+        user_id: string;
+        resume_text?: string;
+      };
+    }
+  | {
+      type: 'INTERVIEW_EMBEDDING_NEEDED';
+      payload: {
+        interview_id: string;
+        user_id: string;
+        interview_type: 'reality_check' | 'weekly_sprint' | 'skill_deep_dive' | 'mock_interview';
+        duration_minutes?: number;
       };
     };
 
@@ -259,12 +331,21 @@ export const EVENT_TARGET_AGENTS: Record<AgentEventType, AgentName[]> = {
   USER_STALLED: ['strategist'],
   PRACTICE_RECOMMENDED: ['interviewer'],
   REJECTION_RECEIVED: ['strategist'],
+  GHOSTING_DETECTED: ['strategist'],
+  DIRECTIVE_ISSUED: ['action', 'architect'],
+  DIRECTIVE_COMPLETED: ['strategist'],
   MODULE_COMPLETED: ['strategist', 'architect'],
   ROADMAP_GENERATED: ['strategist'],
 
   // Action events
   AUTO_APPLY_TRIGGERED: ['action'],
   APPLICATION_SUBMITTED: ['strategist'],
+  RESUME_UPDATE_REQUESTED: ['architect'],
+  BATCH_APPLICATION_REQUESTED: ['action'],
+
+  // Embedding events
+  RESUME_UPLOADED: ['action'],
+  INTERVIEW_EMBEDDING_NEEDED: ['action'],
 };
 
 /**
@@ -285,10 +366,18 @@ export const EVENT_SOURCE_AGENTS: Record<AgentEventType, AgentName> = {
   USER_STALLED: 'strategist',
   PRACTICE_RECOMMENDED: 'strategist',
   REJECTION_RECEIVED: 'action',
+  GHOSTING_DETECTED: 'strategist',
+  DIRECTIVE_ISSUED: 'strategist',
+  DIRECTIVE_COMPLETED: 'strategist',
   MODULE_COMPLETED: 'system',
   ROADMAP_GENERATED: 'architect',
   AUTO_APPLY_TRIGGERED: 'action',
   APPLICATION_SUBMITTED: 'action',
+  RESUME_UPDATE_REQUESTED: 'strategist',
+  BATCH_APPLICATION_REQUESTED: 'strategist',
+  // Embedding events
+  RESUME_UPLOADED: 'system',
+  INTERVIEW_EMBEDDING_NEEDED: 'interviewer',
 };
 
 // ============================================================================
@@ -323,12 +412,19 @@ export const EVENT_PRIORITIES: Record<AgentEventType, number> = {
   USER_STALLED: 5,
   PRACTICE_RECOMMENDED: 5,
   REJECTION_RECEIVED: 5,
+  GHOSTING_DETECTED: 5,
+  DIRECTIVE_ISSUED: 5,
+  DIRECTIVE_COMPLETED: 5,
   MODULE_COMPLETED: 5,
   ROADMAP_GENERATED: 5,
 
   // Background processing (Priority 3)
   JOB_MATCH_FOUND: 3,
   APPLICATION_SUBMITTED: 3,
+  RESUME_UPDATE_REQUESTED: 3,
+  BATCH_APPLICATION_REQUESTED: 3,
+  RESUME_UPLOADED: 3,
+  INTERVIEW_EMBEDDING_NEEDED: 3,
 
   // Bulk operations (Priority 1)
   MARKET_UPDATE: 1,
@@ -372,8 +468,16 @@ export const EVENT_JOB_IDS: Record<AgentEventType, string> = {
   USER_STALLED: 'strategist.re-engage-user',
   PRACTICE_RECOMMENDED: 'interviewer.schedule-practice',
   REJECTION_RECEIVED: 'strategist.process-rejection',
+  GHOSTING_DETECTED: 'strategist.handle-ghosting',
+  DIRECTIVE_ISSUED: 'strategist.execute-directive',
+  DIRECTIVE_COMPLETED: 'strategist.track-directive-completion',
   MODULE_COMPLETED: 'strategist.track-progress',
   ROADMAP_GENERATED: 'strategist.analyze-new-roadmap',
   AUTO_APPLY_TRIGGERED: 'action.execute-apply',
   APPLICATION_SUBMITTED: 'strategist.track-application',
+  RESUME_UPDATE_REQUESTED: 'architect.update-resume',
+  BATCH_APPLICATION_REQUESTED: 'action.batch-apply',
+  // Embedding jobs
+  RESUME_UPLOADED: 'action.embed-resume',
+  INTERVIEW_EMBEDDING_NEEDED: 'action.embed-interview',
 };
